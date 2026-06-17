@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.env.*
+!.env.example
+*.pyc
+postgres_data/

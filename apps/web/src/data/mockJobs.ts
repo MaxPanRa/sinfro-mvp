@@ -1,0 +1,14 @@
+import type { Job } from "../types/job";
+
+export const mockJobs: Job[] = [
+  { id: 1, title: "Forward Deployed Engineer", company: "Platzi", source: "Indeed MX", modality: "Remoto", location: "CDMX", score: 92, scoreType: "IA", status: "nueva", detected: "hace 12 min", salary: "", skills: ["React", "TypeScript", "IA Generativa", "REST APIs"] },
+  { id: 2, title: "Node.js Full Stack Developer", company: "Xideral", source: "Indeed MX", modality: "Remoto", location: "CDMX", score: 88, scoreType: "IA", status: "vista", detected: "hace 38 min", salary: "", skills: ["Angular", "GraphQL", "NestJS", "Node.js", "PostgreSQL"] },
+  { id: 3, title: "Front-end Developer (React / Next.js)", company: "Workana", source: "Workana", modality: "Remoto", location: "CDMX", score: 85, scoreType: "IA", status: "descartada", detected: "hace 1 h", salary: "", skills: ["React", "Next.js", "Tailwind"] },
+  { id: 4, title: "Principal Fullstack Engineer", company: "Amalga Group", source: "Indeed MX", modality: "Remoto", location: "Benito Juarez", score: 95, scoreType: "IA", status: "nueva", detected: "hace 1 h", salary: "$90-120k", skills: ["Python", "React", "TypeScript"] },
+  { id: 5, title: "Full Stack Laravel + React Developer", company: "Bluelight Consulting", source: "Indeed MX", modality: "Remoto", location: "LATAM", score: 78, scoreType: "prelim", status: "vista", detected: "hace 2 h", salary: "", skills: ["PHP", "React", "Vue.js", "Tailwind"] },
+  { id: 6, title: "Senior Software Engineer", company: "Helix", source: "Indeed MX", modality: "Remoto", location: "CDMX", score: 81, scoreType: "IA", status: "aplicada", detected: "hace 3 h", salary: "", skills: ["React", "Node.js", "AWS"] },
+  { id: 7, title: "Junior Manual QA Engineer (API Testing)", company: "Lifted, an Upwork Company", source: "Indeed MX", modality: "Remoto", location: "LATAM", score: 41, scoreType: "IA", status: "nueva", detected: "hace 3 h", salary: "", skills: ["MongoDB", "REST APIs", "QA"] },
+  { id: 8, title: "Software Engineer, Backend Node.js / TS", company: "Lifted, an Upwork Company", source: "Indeed MX", modality: "Remoto", location: "LATAM", score: 90, scoreType: "IA", status: "nueva", detected: "hace 4 h", salary: "", skills: ["GraphQL", "MongoDB", "Node.js", "TypeScript"] },
+  { id: 9, title: "Frontend Platform Engineer", company: "Konfio", source: "SerpAPI", modality: "Hibrido", location: "CDMX", score: 84, scoreType: "prelim", status: "nueva", detected: "hace 5 h", salary: "$75-95k", skills: ["React", "Design Systems", "TypeScript", "Testing"] },
+  { id: 10, title: "AI Product Engineer", company: "Clip", source: "Adzuna", modality: "Remoto", location: "Mexico", score: 91, scoreType: "IA", status: "nueva", detected: "hace 6 h", salary: "", skills: ["Python", "OpenAI", "React", "FastAPI"] },
+];
