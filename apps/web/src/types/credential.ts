@@ -1,5 +1,5 @@
 export type ProviderStatus = "connected" | "disconnected" | "testing" | "error";
-export type ProviderGroup = "Modelos de IA" | "Busqueda & scraping" | "Bolsas de empleo";
+export type ProviderGroup = "Correo" | "Modelos de IA" | "Busqueda & scraping" | "Bolsas de empleo";
 
 export interface CredentialProvider {
   id: string;
@@ -15,4 +15,12 @@ export interface CredentialProvider {
 export interface CredentialPayload {
   providerId: string;
   apiKey: string;
+  phoneCode?: string;
+  phoneNumber?: string;
+}
+
+export interface CredentialTestPayload {
+  apiKey?: string;
+  phoneCode?: string;
+  phoneNumber?: string;
 }

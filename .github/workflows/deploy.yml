@@ -1,0 +1,67 @@
+name: Deploy SinFro MVP
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: maxpanra-server
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script: |
+            set -e
+
+            cd "${{ secrets.VPS_APP_PATH }}"
+
+            git fetch origin main
+            git reset --hard origin/main
+
+            cat > .env << 'EOF'
+            PROJECT_NAME=SinFro MVP
+            ENVIRONMENT=pro
+            APP_SECRET_KEY=${{ secrets.APP_SECRET_KEY }}
+            JWT_SECRET_KEY=${{ secrets.JWT_SECRET_KEY }}
+
+            POSTGRES_DB=sinfro
+            POSTGRES_USER=sinfro
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            DATABASE_URL=postgresql+psycopg://sinfro:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/sinfro
+
+            REDIS_URL=redis://redis:6379/0
+
+            API_HOST=0.0.0.0
+            API_PORT=8000
+            WEB_PORT=5173
+            PUBLIC_WEB_URL=${{ secrets.PUBLIC_WEB_URL }}
+            PUBLIC_API_URL=${{ secrets.PUBLIC_API_URL }}
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
+
+            SMTP_HOST=${{ secrets.SMTP_HOST }}
+            SMTP_PORT=${{ secrets.SMTP_PORT || 587 }}
+            SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+            SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+            SMTP_FROM_EMAIL=${{ secrets.SMTP_FROM_EMAIL || 'developer@maxpanra.xyz' }}
+            SMTP_FROM_NAME=${{ secrets.SMTP_FROM_NAME || 'SinFro' }}
+            SMTP_USE_TLS=${{ secrets.SMTP_USE_TLS || 'true' }}
+
+            CADDY_DOMAIN=${{ secrets.CADDY_DOMAIN }}
+            EOF
+
+            docker compose pull postgres redis caddy
+            docker compose up -d --build
+            docker compose ps

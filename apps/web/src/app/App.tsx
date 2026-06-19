@@ -3,9 +3,9 @@ import { mockCredentials } from "../data/mockCredentials";
 import { mockJobs } from "../data/mockJobs";
 import { mockProfiles } from "../data/mockProfiles";
 import { mockSyncRuns } from "../data/mockSyncRuns";
-import { apiClient } from "../lib/apiClient";
+import { apiClient, type UserSession } from "../lib/apiClient";
 import { initialsOf } from "../lib/formatters";
-import type { CredentialPayload, CredentialProvider } from "../types/credential";
+import type { CredentialPayload, CredentialProvider, CredentialTestPayload } from "../types/credential";
 import type { DetailTab, Job, JobFilter, JobSort } from "../types/job";
 import type { Profile, ProfileDraft } from "../types/profile";
 import type { SubscriptionPlan, UserSubscription } from "../types/subscription";
@@ -17,12 +17,34 @@ import { ProfilesView } from "../views/ProfilesView";
 import { SettingsView } from "../views/SettingsView";
 import { SubscriptionView } from "../views/SubscriptionView";
 import { SyncRunsView } from "../views/SyncRunsView";
+import { AuthView } from "../views/AuthView";
+import { OnboardingView } from "../views/OnboardingView";
 import "../styles/app.css";
 
 const storedTheme = () => (localStorage.getItem("sinfron.theme") as ThemeId | null) ?? "esmeralda";
-const storedAccent = () => (localStorage.getItem("sinfron.accent") as AccentId | null) ?? "esmeralda";
+const storedAccent = () => (localStorage.getItem("sinfron.accent") as AccentId | null) ?? "#10A37F";
+
+const emptyProfile: Profile = {
+  id: 0,
+  initials: "SF",
+  name: "Nuevo perfil",
+  role: "Sin perfil activo",
+  email: "",
+  english: "Sin definir",
+  location: "",
+  modality: "Remoto",
+  salary: "",
+  cvStatus: "Sin CV cargado",
+  description: "Crea tu primer perfil para comparar vacantes con tu CV.",
+  keywords: [],
+  skills: [],
+};
 
 export function App() {
+  const [authReady, setAuthReady] = useState(false);
+  const [verifyingEmail, setVerifyingEmail] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [user, setUser] = useState<UserSession | null>(null);
   const [view, setView] = useState<ViewId>("inbox");
   const [density, setDensity] = useState<Density>("comoda");
   const [theme, setThemeState] = useState<ThemeId>(storedTheme);
@@ -47,10 +69,44 @@ export function App() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
 
-  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0];
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0] ?? emptyProfile;
   const selectedJob = selectedId ? jobs.find((job) => job.id === selectedId) ?? null : null;
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verificationToken = params.get("verifyEmail");
+    if (verificationToken) {
+      setVerifyingEmail(true);
+      apiClient.confirmEmail(verificationToken)
+        .then((session) => {
+          apiClient.setToken(session.accessToken);
+          setUser(session.user);
+          window.history.replaceState({}, "", window.location.pathname);
+        })
+        .catch(() => setVerifyError("No se pudo confirmar el correo. Pide una nueva liga."))
+        .finally(() => {
+          setVerifyingEmail(false);
+          setAuthReady(true);
+        });
+      return;
+    }
+
+    if (!apiClient.getToken()) {
+      setAuthReady(true);
+      return;
+    }
+
+    apiClient.getMe()
+      .then(setUser)
+      .catch(() => {
+        apiClient.clearToken();
+        setUser(null);
+      })
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     apiClient.getJobs().then(setJobs).catch(() => undefined);
     apiClient.getProfiles().then((items) => {
       if (items.length) {
@@ -71,7 +127,7 @@ export function App() {
       localStorage.setItem("sinfron.theme", remoteTheme.theme);
       localStorage.setItem("sinfron.accent", remoteTheme.accent);
     }).catch(() => undefined);
-  }, []);
+  }, [user]);
 
   const counts = useMemo(() => ({
     total: jobs.length,
@@ -99,7 +155,7 @@ export function App() {
   const subtitle = {
     inbox: `${counts.total} vacantes · ${counts.nuevas} nuevas`,
     perfiles: `${profiles.length} perfiles · 1 activo`,
-    settings: "8 proveedores",
+    settings: `${credentials.length} proveedores`,
     jobs: "1018 totales hoy",
     subscription: subscription ? subscription.plan.name : "planes BYOK",
   }[view];
@@ -200,11 +256,49 @@ export function App() {
     setCredentials((current) => current.map((credential) => (credential.id === payload.providerId ? saved : credential)));
   };
 
-  const testCredential = async (id: string) => {
+  const testCredential = async (id: string, payload?: CredentialTestPayload) => {
     setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: "testing" } : credential)));
-    await apiClient.testCredential(id);
-    setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: credential.maskedKey?.startsWith("—") ? "disconnected" : "connected", lastTest: "test ahora" } : credential)));
+    const result = await apiClient.testCredential(id, payload);
+    setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: credential.maskedKey?.startsWith("sin ") ? "disconnected" : "connected", lastTest: result.message || "test ahora" } : credential)));
+    return result;
   };
+
+  const login = async (payload: { email: string; password: string }) => {
+    const session = await apiClient.login(payload);
+    apiClient.setToken(session.accessToken);
+    setUser(session.user);
+  };
+
+  const register = async (payload: { name: string; email: string; password: string }) => {
+    return apiClient.register(payload);
+  };
+
+  const completeOnboarding = async (payload: { theme: ThemeId; accent: string; density: Density }) => {
+    await apiClient.completeOnboarding(payload);
+    localStorage.setItem("sinfron.theme", payload.theme);
+    localStorage.setItem("sinfron.accent", payload.accent);
+    setThemeState(payload.theme);
+    setAccentState(payload.accent);
+    setDensity(payload.density);
+    setUser((current) => current ? { ...current, onboarding_completed: true } : current);
+  };
+
+  const connectGoogle = async () => {
+    const result = await apiClient.getGoogleAuthUrl();
+    window.location.assign(result.authUrl);
+  };
+
+  if (!authReady || verifyingEmail) {
+    return <AuthView verifying={verifyingEmail} verifyError={verifyError} onLogin={login} onRegister={register} />;
+  }
+
+  if (!user) {
+    return <AuthView verifying={false} verifyError={verifyError} onLogin={login} onRegister={register} />;
+  }
+
+  if (!user.onboarding_completed) {
+    return <OnboardingView initialTheme={theme} initialAccent={accent} initialDensity={density} onComplete={completeOnboarding} />;
+  }
 
   return (
     <AppShell
@@ -269,7 +363,7 @@ export function App() {
         />
       ) : null}
 
-      {view === "settings" ? <SettingsView credentials={credentials} onSaveCredential={saveCredential} onTestCredential={testCredential} /> : null}
+      {view === "settings" ? <SettingsView credentials={credentials} onSaveCredential={saveCredential} onTestCredential={testCredential} onConnectGoogle={connectGoogle} /> : null}
       {view === "jobs" ? <SyncRunsView runs={syncRuns} nuevas={counts.nuevas} /> : null}
       {view === "subscription" ? <SubscriptionView plans={plans} subscription={subscription} /> : null}
     </AppShell>

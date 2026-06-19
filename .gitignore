@@ -9,3 +9,5 @@ __pycache__/
 !.env.example
 *.pyc
 postgres_data/
+
+client_secret.json

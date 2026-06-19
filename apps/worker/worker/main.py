@@ -17,7 +17,12 @@ def main() -> None:
         _, raw = item
         try:
             payload = json.loads(raw)
-            process_sync_job(run_id=int(payload["run_id"]), user_id=int(payload["user_id"]))
+            process_sync_job(
+                run_id=int(payload["run_id"]),
+                user_id=int(payload["user_id"]),
+                target_user_id=int(payload["target_user_id"]) if payload.get("target_user_id") else None,
+                job_family=payload.get("job_family", "software"),
+            )
         except Exception as exc:
             print(f"worker error: {exc}")
             time.sleep(1)

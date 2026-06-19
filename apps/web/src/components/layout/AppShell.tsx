@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import type { AccentId, Density, ThemeId, ViewId } from "../../types/theme";
@@ -29,7 +29,7 @@ interface AppShellProps {
 
 export function AppShell(props: AppShellProps) {
   return (
-    <div className={`app-shell ${props.density === "compacta" ? "compact" : ""}`} data-theme={props.theme} data-accent={props.accent}>
+    <div className={`app-shell ${props.density === "compacta" || props.density === "super" ? "compact" : ""} ${props.density === "super" ? "super" : ""}`} data-theme={props.theme} style={accentVars(props.accent)} data-accent={props.accent}>
       <Sidebar
         activeView={props.view}
         counts={props.counts}
@@ -60,4 +60,27 @@ export function AppShell(props: AppShellProps) {
       </div>
     </div>
   );
+}
+
+function accentVars(accent: string): CSSProperties {
+  const color = accent.startsWith("#") ? accent : "#10A37F";
+  const rgb = hexToRgb(color);
+  if (!rgb) return {};
+  const rgba = (alpha: number) => `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+  return {
+    "--accent": color,
+    "--accentH": color,
+    "--accentW1": rgba(0.1),
+    "--accentW2": rgba(0.13),
+    "--accentW3": rgba(0.25),
+    "--accentW4": rgba(0.28),
+    "--accentGlow": rgba(0.4),
+  } as CSSProperties;
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+  const value = Number.parseInt(normalized, 16);
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
 }

@@ -12,7 +12,7 @@ export function statusMeta(status: JobStatus) {
   const map = {
     nueva: { label: "Nueva", color: "#4EA7F5", bg: "rgba(78,167,245,0.13)" },
     vista: { label: "Vista", color: "var(--text2)", bg: "rgba(143,163,155,0.10)" },
-    aplicada: { label: "Aplicada", color: "var(--accent)", bg: "var(--accentW2)" },
+    aplicada: { label: "Aplicada", color: "#16A34A", bg: "rgba(22,163,74,0.14)" },
     descartada: { label: "Descartada", color: "#E5484D", bg: "rgba(229,72,77,0.12)" },
   };
   return map[status];

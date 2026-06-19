@@ -10,7 +10,22 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_verified_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PendingRegistration(Base):
+    __tablename__ = "pending_registrations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    password_hash: Mapped[str] = mapped_column(String(255))
+    token_hash: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    expires_at: Mapped[str] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -22,6 +37,10 @@ class OAuthAccount(Base):
     provider: Mapped[str] = mapped_column(String(60))
     provider_user_id: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255))
+    encrypted_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    connected_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserTheme(Base):
@@ -43,6 +62,7 @@ class SubscriptionPlan(Base):
     price_label: Mapped[str] = mapped_column(String(80))
     description: Mapped[str] = mapped_column(Text)
     features: Mapped[list[str]] = mapped_column(JSON)
+    limits: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class UserSubscription(Base):
@@ -137,3 +157,4 @@ class JobRun(Base):
     duration: Mapped[str] = mapped_column(String(40))
     started: Mapped[str] = mapped_column(String(80))
     error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())

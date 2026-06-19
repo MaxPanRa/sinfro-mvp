@@ -20,11 +20,15 @@ export function JobList({ jobs, selectedId, onSelect, onClearFilters }: JobListP
         const band = scoreBand(job.score);
         const status = statusMeta(job.status);
         const accent = job.status === "descartada" ? "#E5484D" : job.status === "aplicada" ? "var(--accent)" : band.color;
+        const statusClass =
+          job.status === "descartada" ? "is-discarded" :
+          job.status === "aplicada" ? "is-applied" :
+          job.status === "vista" ? "is-seen" : "";
         return (
           <article
             key={job.id}
             data-animate-row
-            className={`job-row ${job.id === selectedId ? "is-selected" : ""} ${job.status === "descartada" ? "is-discarded" : ""}`}
+            className={`job-row ${job.id === selectedId ? "is-selected" : ""} ${statusClass}`}
             onClick={() => onSelect(job.id)}
           >
             <div className="job-accent" style={{ background: accent }} />

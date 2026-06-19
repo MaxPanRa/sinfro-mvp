@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from app.models import (
 )
 
 DEMO_EMAIL = "demo@sinfro.local"
+GLOBAL_POOL_EMAIL = "global-pool@sinfro.local"
 
 
 @dataclass(frozen=True)
@@ -43,13 +45,15 @@ def seed_dev_data(db: Session) -> User:
 
 def seed_demo_data(db: Session) -> DemoSeedResult:
     user = upsert_user(db)
+    global_user = upsert_global_pool_user(db)
     upsert_theme(db, user)
     plans = upsert_plans(db)
+    set_all_users_to_free(db, plans["free"])
     upsert_subscription(db, user, plans["free"])
     profiles = upsert_profiles(db, user)
     credentials = upsert_credentials(db, user)
     sources = upsert_sources(db)
-    jobs = upsert_jobs(db, user, sources)
+    jobs = upsert_jobs(db, global_user, sources)
     evaluations = upsert_evaluations(db, jobs, profiles)
     runs = upsert_runs(db, user)
     db.commit()
@@ -72,6 +76,22 @@ def upsert_user(db: Session) -> User:
     else:
         user.name = "Max Panra"
         user.is_demo = True
+    user.email_verified_at = user.email_verified_at or datetime.now(timezone.utc)
+    user.onboarding_completed = True
+    return user
+
+
+def upsert_global_pool_user(db: Session) -> User:
+    user = db.scalar(select(User).where(User.email == GLOBAL_POOL_EMAIL))
+    if not user:
+        user = User(email=GLOBAL_POOL_EMAIL, name="Global Job Pool", is_demo=True)
+        db.add(user)
+        db.flush()
+    else:
+        user.name = "Global Job Pool"
+        user.is_demo = True
+    user.email_verified_at = user.email_verified_at or datetime.now(timezone.utc)
+    user.onboarding_completed = True
     return user
 
 
@@ -92,8 +112,17 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "code": "free",
             "name": "Free",
             "price_label": "$0",
-            "description": "1 perfil, escaneos manuales y BYOK basico.",
-            "features": ["1 perfil activo", "Sync manual", "BYOK local", "Bandeja de vacantes"],
+            "description": "Pool global, 5 refresh manuales por dia y BYOK basico.",
+            "features": ["Pool global", "5 refresh manuales/dia", "1 perfil activo", "BYOK local"],
+            "limits": {"profiles_limit": 1, "manual_refresh_per_day": 5, "global_pool_access": True, "custom_sync": False, "deep_analysis": False},
+        },
+        {
+            "code": "friends_family",
+            "name": "Friends & Family",
+            "price_label": "$0 beta",
+            "description": "Plan tester con mas margen para ayudar a probar SinFro.",
+            "features": ["Pool global", "15 refresh manuales/dia", "3 perfiles", "Features beta"],
+            "limits": {"profiles_limit": 3, "manual_refresh_per_day": 15, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "beta_features": True},
         },
         {
             "code": "pro_byok",
@@ -101,6 +130,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$12/mes",
             "description": "Multi-perfil, analisis profundo, sync programado y mas fuentes.",
             "features": ["5 perfiles", "Sync programado", "Analisis profundo", "Historial extendido"],
+            "limits": {"profiles_limit": 5, "manual_refresh_per_day": 30, "global_pool_access": True, "custom_sync": True, "deep_analysis": True},
         },
         {
             "code": "team_byok",
@@ -108,6 +138,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$39/mes",
             "description": "Colaboracion para equipos pequenos con llaves propias.",
             "features": ["Usuarios de equipo", "Roles", "Historial compartido", "Fuentes compartidas"],
+            "limits": {"profiles_limit": 20, "manual_refresh_per_day": 100, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "team_users": True},
         },
     ]
     plans: dict[str, SubscriptionPlan] = {}
@@ -120,6 +151,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
         plan.price_label = item["price_label"]
         plan.description = item["description"]
         plan.features = item["features"]
+        plan.limits = item["limits"]
         plans[plan.code] = plan
     db.flush()
     return plans
@@ -133,6 +165,12 @@ def upsert_subscription(db: Session, user: User, plan: SubscriptionPlan) -> User
     subscription.plan_id = plan.id
     subscription.status = "active"
     return subscription
+
+
+def set_all_users_to_free(db: Session, free_plan: SubscriptionPlan) -> None:
+    users = db.scalars(select(User).where(User.email != GLOBAL_POOL_EMAIL)).all()
+    for user in users:
+        upsert_subscription(db, user, free_plan)
 
 
 def upsert_profiles(db: Session, user: User) -> list[Profile]:

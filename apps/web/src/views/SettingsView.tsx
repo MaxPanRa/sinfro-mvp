@@ -5,12 +5,13 @@ import { CredentialGroup } from "../components/settings/CredentialGroup";
 interface SettingsViewProps {
   credentials: CredentialProvider[];
   onSaveCredential: (payload: CredentialPayload) => Promise<void>;
-  onTestCredential: (id: string) => Promise<void>;
+  onTestCredential: (id: string, payload?: Partial<CredentialPayload>) => Promise<{ maskedKey?: string } | void>;
+  onConnectGoogle: () => Promise<void>;
 }
 
-const groupOrder = ["Modelos de IA", "Busqueda & scraping", "Bolsas de empleo"];
+const groupOrder = ["Correo", "Modelos de IA", "Busqueda & scraping", "Bolsas de empleo"];
 
-export function SettingsView({ credentials, onSaveCredential, onTestCredential }: SettingsViewProps) {
+export function SettingsView({ credentials, onSaveCredential, onTestCredential, onConnectGoogle }: SettingsViewProps) {
   return (
     <div className="view">
       <div className="view-inner is-narrow">
@@ -28,6 +29,7 @@ export function SettingsView({ credentials, onSaveCredential, onTestCredential }
             providers={credentials.filter((provider) => provider.group === group)}
             onSave={onSaveCredential}
             onTest={onTestCredential}
+            onConnectGoogle={onConnectGoogle}
           />
         ))}
       </div>

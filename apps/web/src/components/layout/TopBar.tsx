@@ -46,13 +46,14 @@ export function TopBar({ view, subtitle, density, syncing, theme, accent, themeM
       <div className="segmented desktop-only">
         <button className={density === "comoda" ? "is-active" : ""} onClick={() => onDensity("comoda")}>Comoda</button>
         <button className={density === "compacta" ? "is-active" : ""} onClick={() => onDensity("compacta")}>Compacta</button>
+        <button className={density === "super" ? "is-active" : ""} onClick={() => onDensity("super")}>Super</button>
       </div>
 
       <div style={{ position: "relative", flexShrink: 0 }}>
         <button className="icon-button" onClick={onToggleThemeMenu} title="Tema" aria-label="Tema">
           <Palette size={16} />
         </button>
-        {themeMenuOpen ? <ThemeMenu theme={theme} accent={accent} onTheme={onTheme} onAccent={onAccent} /> : null}
+        {themeMenuOpen ? <ThemeMenu theme={theme} accent={accent} density={density} onTheme={onTheme} onAccent={onAccent} onDensity={onDensity} /> : null}
       </div>
 
       <Button variant="primary" onClick={onRunSync} icon={<Zap size={14} style={{ animation: syncing ? "pulse 0.9s infinite" : undefined }} />}>

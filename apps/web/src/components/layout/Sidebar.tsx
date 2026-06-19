@@ -1,7 +1,9 @@
-import { ChevronDown, LogOut, Target, X } from "lucide-react";
+import { ChevronDown, LogOut, X } from "lucide-react";
 import { routes } from "../../app/routes";
 import type { ViewId } from "../../types/theme";
 import type { Profile } from "../../types/profile";
+import logoBlack from "../../assets/brand/logo_black.png";
+import logoWhite from "../../assets/brand/logo_white.png";
 
 interface SidebarProps {
   activeView: ViewId;
@@ -19,7 +21,10 @@ export function Sidebar({ activeView, counts, activeProfile, hasRunning, isOpen,
       {isOpen ? <button className="nav-backdrop" aria-label="Cerrar navegacion" onClick={onClose} /> : null}
       <aside className={`sidebar ${isOpen ? "is-open" : ""}`}>
         <div className="sidebar__brand">
-          <div className="mark"><Target size={17} strokeWidth={2.4} /></div>
+          <div className="brand-logo">
+            <img className="brand-logo__image logo--light" src={logoWhite} alt="SinFro" />
+            <img className="brand-logo__image logo--dark" src={logoBlack} alt="SinFro" />
+          </div>
           <div style={{ flex: 1, lineHeight: 1.1 }}>
             <div className="brand-title">Sinfron</div>
             <div className="mono faint" style={{ fontSize: 10.5, marginTop: 2 }}>job radar · v0.2</div>
@@ -46,7 +51,7 @@ export function Sidebar({ activeView, counts, activeProfile, hasRunning, isOpen,
                 <Icon size={17} strokeWidth={1.7} />
                 <span style={{ flex: 1 }}>{route.label}</span>
                 {route.id === "inbox" ? <span className="pill-count is-accent">{counts.nuevas}</span> : null}
-                {route.id === "settings" ? <span className="pill-count">{counts.connected}/8</span> : null}
+                {route.id === "settings" ? <span className="pill-count">{counts.connected}/10</span> : null}
                 {route.id === "jobs" && hasRunning ? <span className="status-dot is-running" /> : null}
               </button>
             );
