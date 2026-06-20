@@ -22,6 +22,7 @@ def main() -> None:
                 user_id=int(payload["user_id"]),
                 target_user_id=int(payload["target_user_id"]) if payload.get("target_user_id") else None,
                 job_family=payload.get("job_family", "software"),
+                summary_minutes=int(payload.get("summary_minutes", 60)),
             )
         except Exception as exc:
             print(f"worker error: {exc}")

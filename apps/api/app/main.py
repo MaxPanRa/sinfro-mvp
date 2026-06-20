@@ -396,7 +396,7 @@ def run_sync(db: DbDep, redis: RedisDep, user: Annotated[User, Depends(current_u
     db.commit()
     db.refresh(run)
     pool_user = global_pool_user(db)
-    redis.lpush("sync_jobs", json.dumps({"run_id": run.id, "user_id": user.id, "target_user_id": pool_user.id, "job_family": "software"}))
+    redis.lpush("sync_jobs", json.dumps({"run_id": run.id, "user_id": user.id, "target_user_id": pool_user.id, "job_family": "software", "summary_minutes": 60}))
     return {"id": run.id, "source": run.source, "status": run.status, "found": "—", "duration": run.duration, "started": run.started, "limit": daily_limit, "usedToday": len(used_today) + 1}
 
 
@@ -428,6 +428,9 @@ def job_to_dict(row: JobPosting) -> dict:
         "scoreType": row.score_type,
         "status": row.status,
         "detected": row.detected,
+        "detectedAt": row.detected_at.isoformat() if row.detected_at else None,
+        "url": row.url,
+        "description": row.description,
         "salary": row.salary,
         "skills": row.skills,
     }

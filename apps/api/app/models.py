@@ -130,6 +130,9 @@ class JobPosting(Base):
     score_type: Mapped[str] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(40), default="nueva")
     detected: Mapped[str] = mapped_column(String(80))
+    detected_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     salary: Mapped[str] = mapped_column(String(120), default="")
     skills: Mapped[list[str]] = mapped_column(JSON)
 

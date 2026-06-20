@@ -19,7 +19,7 @@ export function JobList({ jobs, selectedId, onSelect, onClearFilters }: JobListP
       {jobs.map((job) => {
         const band = scoreBand(job.score);
         const status = statusMeta(job.status);
-        const accent = job.status === "descartada" ? "#E5484D" : job.status === "aplicada" ? "var(--accent)" : band.color;
+        const accent = job.status === "descartada" ? "#E5484D" : job.status === "aplicada" ? "#16A34A" : band.color;
         const statusClass =
           job.status === "descartada" ? "is-discarded" :
           job.status === "aplicada" ? "is-applied" :
@@ -44,7 +44,7 @@ export function JobList({ jobs, selectedId, onSelect, onClearFilters }: JobListP
                 <span className="faint" style={{ fontSize: 10.5, marginLeft: 2 }}>· {job.detected}</span>
               </div>
             </div>
-            <div className="score-box" style={{ background: band.bg }}>
+            <div className="score-box" style={{ background: statusClass ? "transparent" : band.bg }}>
               <span className="score-value" style={{ color: band.color }}>{job.score}</span>
               <span className="score-label" style={{ color: band.color }}>{job.scoreType}</span>
             </div>
