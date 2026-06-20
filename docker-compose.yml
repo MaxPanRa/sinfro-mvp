@@ -67,13 +67,13 @@ services:
     env_file:
       - path: .env
         required: false
-    ports:
-      - "80:80"
-      - "443:443"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - default
+      - proxy
     depends_on:
       - web
       - api
@@ -82,3 +82,7 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+
+networks:
+  proxy:
+    external: true

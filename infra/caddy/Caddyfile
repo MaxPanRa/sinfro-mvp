@@ -1,4 +1,5 @@
-{$CADDY_DOMAIN:localhost} {
+# TLS lo termina Nginx Proxy Manager (NPM); Caddy solo enruta en HTTP.
+:80 {
   encode gzip
 
   handle_path /api/* {
