@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -168,6 +170,43 @@ class AiTaskAssignment(Base):
     # Credencial a usar (NULL = la del propio usuario). En asignaciones admin apunta
     # al admin, para que el usuario consuma la API key BYOK del administrador.
     credential_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ApiCredentialGrant(Base):
+    """El admin presta una de sus credenciales (provider) a un usuario: éste usa la
+    API key del admin (acceso compartido) y no la puede quitar."""
+
+    __tablename__ = "api_credential_grants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_api_grant_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(80))
+    credential_user_id: Mapped[int] = mapped_column(Integer)
+
+
+class ApiUsage(Base):
+    """Contador LOCAL de usos por (dueño de la credencial, provider).
+
+    period: "month" (resetea cada mes) | "rolling7" (renovación a los renew_days,
+    p.ej. Jooble) | "none" (sin cuota, p.ej. Apify cobra por operación).
+    """
+
+    __tablename__ = "api_usage"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_api_usage_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(80))
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    quota_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    period: Mapped[str] = mapped_column(String(20), default="none")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    renew_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class JobSource(Base):

@@ -96,6 +96,28 @@ class JobPosting(Base):
     skills: Mapped[list[str]] = mapped_column(JSON)
 
 
+class ApiCredentialGrant(Base):
+    __tablename__ = "api_credential_grants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(80))
+    credential_user_id: Mapped[int] = mapped_column(Integer)
+
+
+class ApiUsage(Base):
+    __tablename__ = "api_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    provider: Mapped[str] = mapped_column(String(80))
+    used: Mapped[int] = mapped_column(Integer, default=0)
+    quota_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    period: Mapped[str] = mapped_column(String(20), default="none")
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    renew_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class JobEvaluation(Base):
     __tablename__ = "job_evaluations"
 
@@ -223,11 +245,15 @@ def process_sync_job(
             return
         owner_id = target_user_id or user_id
         try:
-            credentials = load_api_credentials(db, user_id)
+            credentials, cred_owners = load_api_credentials_with_owners(db, user_id)
             # Perfil del escaneo: sin él el porcentaje no puede ser semántico (no hay
             # skills/modalidad/ubicación contra qué comparar la vacante).
             profile = db.scalar(select(Profile).where(Profile.id == profile_id)) if profile_id else None
             fetched_jobs = fetch_all_real_jobs(job_family=job_family, credentials=credentials, keywords=keywords)
+            # Cuenta un uso por cada API premium consultada (sobre el dueño de la key).
+            for provider in PROVIDER_USAGE_DEFAULTS:
+                if provider in credentials:
+                    bump_api_usage(db, cred_owners.get(provider, user_id), provider)
             if fetched_jobs:
                 clear_demo_seed_jobs(db, owner_id, profile_id)
                 clear_non_matching_real_jobs(db, owner_id, profile_id, keywords)
@@ -256,17 +282,83 @@ def process_sync_job(
             print(f"scan notifications skipped: {exc}")
 
 
+# Proveedores de búsqueda/scraping con cuota local. apify: sin contador (cobra por
+# operación). period: "month" resetea mensual; "rolling7" renovación cada renew_days.
+PROVIDER_USAGE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "serpapi": {"quota_limit": 250, "period": "month", "renew_days": None},
+    "adzuna": {"quota_limit": 250, "period": "month", "renew_days": None},
+    "jooble": {"quota_limit": None, "period": "rolling7", "renew_days": 7},
+    "apify": {"quota_limit": None, "period": "none", "renew_days": None},
+}
+
+
 def load_api_credentials(db, user_id: int) -> dict[str, str]:
-    rows = db.scalars(select(ApiCredential).where(ApiCredential.user_id == user_id)).all()
+    """Credenciales efectivas del usuario: las suyas + las que el admin le prestó."""
+    credentials, _owners = load_api_credentials_with_owners(db, user_id)
+    return credentials
+
+
+def load_api_credentials_with_owners(db, user_id: int) -> tuple[dict[str, str], dict[str, int]]:
+    """Como ``load_api_credentials`` pero también devuelve el DUEÑO de cada credencial
+    (el propio usuario, o el admin que se la prestó), para contar los usos sobre él."""
     credentials: dict[str, str] = {}
+    owners: dict[str, int] = {}
+    rows = db.scalars(select(ApiCredential).where(ApiCredential.user_id == user_id)).all()
     for row in rows:
         try:
             value = decrypt_secret(row.encrypted_value)
             if credential_is_usable(value):
                 credentials[row.provider] = value
+                owners[row.provider] = user_id
         except Exception as exc:
             print(f"{row.provider} credential skipped: {exc}")
-    return credentials
+    # Credenciales prestadas por el admin (no sobreescriben las propias).
+    grants = db.scalars(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user_id)).all()
+    for grant in grants:
+        if grant.provider in credentials:
+            continue
+        owner_row = db.scalar(select(ApiCredential).where(ApiCredential.user_id == grant.credential_user_id, ApiCredential.provider == grant.provider))
+        if not owner_row:
+            continue
+        try:
+            value = decrypt_secret(owner_row.encrypted_value)
+            if credential_is_usable(value):
+                credentials[grant.provider] = value
+                owners[grant.provider] = grant.credential_user_id
+        except Exception as exc:
+            print(f"granted {grant.provider} credential skipped: {exc}")
+    return credentials, owners
+
+
+def get_or_create_api_usage(db, owner_id: int, provider: str) -> ApiUsage:
+    usage = db.scalar(select(ApiUsage).where(ApiUsage.user_id == owner_id, ApiUsage.provider == provider))
+    if usage:
+        return usage
+    defaults = PROVIDER_USAGE_DEFAULTS.get(provider, {"quota_limit": None, "period": "none", "renew_days": None})
+    usage = ApiUsage(
+        user_id=owner_id,
+        provider=provider,
+        used=0,
+        quota_limit=defaults["quota_limit"],
+        period=defaults["period"],
+        period_start=datetime.now(timezone.utc),
+        renew_days=defaults["renew_days"],
+    )
+    db.add(usage)
+    db.flush()
+    return usage
+
+
+def bump_api_usage(db, owner_id: int, provider: str, amount: int = 1) -> None:
+    """Suma usos al contador del dueño de la credencial. Resetea el periodo mensual."""
+    usage = get_or_create_api_usage(db, owner_id, provider)
+    now = datetime.now(timezone.utc)
+    if usage.period == "month" and usage.period_start is not None:
+        start = ensure_aware(usage.period_start)
+        if (start.year, start.month) != (now.year, now.month):
+            usage.used = 0
+            usage.period_start = now
+    usage.used = (usage.used or 0) + amount
 
 
 def global_pool_user(db) -> User:

@@ -112,6 +112,23 @@ export interface AdminUser {
   totalProfiles: number;
   createdAt?: string | null;
   aiAssignments: AdminAiAssignment[];
+  apiGrants: string[];
+}
+
+export interface ApiUsageInfo {
+  provider: string;
+  used: number;
+  quotaLimit?: number | null;
+  period: string;
+  daysLeft?: number | null;
+  label: string;
+}
+
+export interface AdminLendable {
+  provider: string;
+  name: string;
+  connected: boolean;
+  usage?: ApiUsageInfo | null;
 }
 
 export interface AdminCode {
@@ -381,6 +398,26 @@ export const apiClient = {
 
   async unassignAdminAi(payload: { userIds: number[]; tasks: string[] }): Promise<AdminUser[]> {
     return request<AdminUser[]>("/admin/ai/unassign", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async getLendableApis(): Promise<AdminLendable[]> {
+    return request<AdminLendable[]>("/admin/api/lendable", undefined, []);
+  },
+
+  async lendApi(payload: { userIds: number[]; provider: string }): Promise<AdminUser[]> {
+    return request<AdminUser[]>("/admin/api/lend", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async unlendApi(payload: { userIds: number[]; provider: string }): Promise<AdminUser[]> {
+    return request<AdminUser[]>("/admin/api/unlend", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async updateApiUsage(payload: { provider: string; used?: number; quotaLimit?: number | null; period?: string; renewDays?: number; resetRenewal?: boolean }): Promise<AdminLendable> {
+    return request<AdminLendable>("/admin/api/usage", { method: "PATCH", body: JSON.stringify(payload) });
+  },
+
+  async getMyApiUsage(): Promise<ApiUsageInfo[]> {
+    return request<ApiUsageInfo[]>("/me/api-usage", undefined, []);
   },
 
   async getAdminCodes(): Promise<AdminCode[]> {

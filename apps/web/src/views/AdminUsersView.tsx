@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RefreshCcw, ShieldOff, Sparkles, X } from "lucide-react";
-import { apiClient, type AdminUser, type AiProviderConfig } from "../lib/apiClient";
+import { KeyRound, Loader2, RefreshCcw, ShieldOff, Sparkles, X } from "lucide-react";
+import { apiClient, type AdminLendable, type AdminUser, type AiProviderConfig } from "../lib/apiClient";
 import { modelOptionText } from "../lib/modelInfo";
 import type { SubscriptionPlan } from "../types/subscription";
 import { Button } from "../components/ui/Button";
@@ -25,16 +25,31 @@ export function AdminUsersView({ plans, currentUserId }: { plans: SubscriptionPl
   const [tasks, setTasks] = useState<Set<string>>(new Set(["cv_read", "cv_vs_job"]));
   const [assigning, setAssigning] = useState(false);
 
+  // Préstamo de APIs (búsqueda/scraping).
+  const [lendable, setLendable] = useState<AdminLendable[]>([]);
+  const [lendProvider, setLendProvider] = useState("");
+  const [lending, setLending] = useState(false);
+  const [usedDraft, setUsedDraft] = useState<string>("");
+
   const load = async () => {
     setError("");
     setLoading(true);
     try {
-      const [list, ai] = await Promise.all([apiClient.getAdminUsers(), apiClient.getAssignableAi().catch(() => [])]);
+      const [list, ai, apis] = await Promise.all([
+        apiClient.getAdminUsers(),
+        apiClient.getAssignableAi().catch(() => []),
+        apiClient.getLendableApis().catch(() => []),
+      ]);
       setUsers(list);
       setAssignable(ai);
+      setLendable(apis);
       if (ai.length && !ai.some((item) => item.provider === provider)) {
         setProvider(ai[0].provider);
         setModel(ai[0].defaultModel || ai[0].models[0] || "");
+      }
+      const connectedApi = apis.find((item) => item.connected);
+      if (connectedApi && !apis.some((item) => item.provider === lendProvider && item.connected)) {
+        setLendProvider(connectedApi.provider);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudieron cargar usuarios.");
@@ -113,6 +128,50 @@ export function AdminUsersView({ plans, currentUserId }: { plans: SubscriptionPl
     }
   };
 
+  const activeLendable = useMemo(() => lendable.find((item) => item.provider === lendProvider), [lendable, lendProvider]);
+
+  const lendApi = async () => {
+    if (!selected.size || !lendProvider) return;
+    setLending(true);
+    setError("");
+    try {
+      const updated = await apiClient.lendApi({ userIds: [...selected], provider: lendProvider });
+      mergeUpdated(updated);
+      setSelected(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo prestar la API.");
+    } finally {
+      setLending(false);
+    }
+  };
+
+  const unlendUserApi = async (userId: number, provider: string) => {
+    setBusyId(userId);
+    setError("");
+    try {
+      const updated = await apiClient.unlendApi({ userIds: [userId], provider });
+      mergeUpdated(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo quitar la API.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveUsage = async () => {
+    if (!lendProvider) return;
+    const used = Number(usedDraft);
+    if (!Number.isFinite(used) || used < 0) return;
+    setError("");
+    try {
+      const updated = await apiClient.updateApiUsage({ provider: lendProvider, used });
+      setLendable((current) => current.map((item) => (item.provider === lendProvider ? { ...item, usage: updated.usage } : item)));
+      setUsedDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo ajustar el uso.");
+    }
+  };
+
   const grid = "auto 1.4fr 0.9fr 1.1fr 0.8fr 1fr";
 
   return (
@@ -164,6 +223,38 @@ export function AdminUsersView({ plans, currentUserId }: { plans: SubscriptionPl
           )}
         </div>
 
+        <div className="surface-card" style={{ padding: "14px 16px", marginBottom: 16, borderRadius: 9 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 13, fontWeight: 700 }}>
+            <KeyRound size={15} color="var(--accent)" /> Prestar API (búsqueda / scraping) a usuarios seleccionados
+          </div>
+          {lendable.some((item) => item.connected) ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
+              <label className="ai-config-field" style={{ minWidth: 160 }}>
+                <span className="faint">Tu API</span>
+                <select className="field select" value={lendProvider} onChange={(event) => { setLendProvider(event.target.value); setUsedDraft(""); }}>
+                  {lendable.filter((item) => item.connected).map((item) => <option key={item.provider} value={item.provider}>{item.name}</option>)}
+                </select>
+              </label>
+              <div className="ai-config-field">
+                <span className="faint">Uso actual</span>
+                <span className="mono" style={{ fontSize: 12.5, padding: "7px 0" }}>{activeLendable?.usage?.label ?? "—"}</span>
+              </div>
+              <label className="ai-config-field" style={{ width: 130 }}>
+                <span className="faint">Ajustar usados</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input className="field mono" type="number" min={0} value={usedDraft} placeholder={String(activeLendable?.usage?.used ?? 0)} onChange={(event) => setUsedDraft(event.target.value)} style={{ width: 70 }} />
+                  <Button onClick={saveUsage} disabled={usedDraft === ""}>Guardar</Button>
+                </div>
+              </label>
+              <Button variant="primary" disabled={lending || !selected.size || !lendProvider} onClick={lendApi} icon={lending ? <Loader2 size={14} style={{ animation: "spin 0.9s linear infinite" }} /> : <KeyRound size={14} />}>
+                Prestar a {selected.size} seleccionado{selected.size === 1 ? "" : "s"}
+              </Button>
+            </div>
+          ) : (
+            <div className="muted" style={{ fontSize: 12.5 }}>Conecta al menos una API de búsqueda/scraping (Conexiones · BYOK) para poder prestarla.</div>
+          )}
+        </div>
+
         <div className="settings-group admin-table">
           <div className="sync-row is-head" style={{ gridTemplateColumns: grid }}>
             <span></span><span>Usuario</span><span>Plan</span><span>IA asignada</span><span>Estado</span><span className="right">Acciones</span>
@@ -190,12 +281,19 @@ export function AdminUsersView({ plans, currentUserId }: { plans: SubscriptionPl
                 {plans.map((plan) => <option key={plan.code} value={plan.code}>{plan.name}</option>)}
               </select>
               <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-                {user.aiAssignments.length ? user.aiAssignments.map((item) => (
+                {user.aiAssignments.map((item) => (
                   <span key={item.task} className="status-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--accent)", background: "var(--accentW2)", fontSize: 11 }}>
                     {taskLabel(item.task)}: {modelOptionText(item.model)}
                     <button type="button" aria-label="Quitar" onClick={() => void unassign(user.id, item.task)} style={{ border: 0, background: "transparent", cursor: "pointer", color: "inherit", display: "inline-flex" }}><X size={12} /></button>
                   </span>
-                )) : <span className="faint" style={{ fontSize: 11.5 }}>—</span>}
+                ))}
+                {(user.apiGrants ?? []).map((prov) => (
+                  <span key={prov} className="status-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#4EA7F5", background: "rgba(78,167,245,0.13)", fontSize: 11 }}>
+                    API: {prov}
+                    <button type="button" aria-label="Quitar API" onClick={() => void unlendUserApi(user.id, prov)} style={{ border: 0, background: "transparent", cursor: "pointer", color: "inherit", display: "inline-flex" }}><X size={12} /></button>
+                  </span>
+                ))}
+                {!user.aiAssignments.length && !(user.apiGrants ?? []).length ? <span className="faint" style={{ fontSize: 11.5 }}>—</span> : null}
               </div>
               <span className="status-badge" style={{ color: user.isActive ? "var(--accent)" : "var(--danger)", background: user.isActive ? "var(--accentW2)" : "rgba(229,72,77,0.10)" }}>
                 {user.isActive ? "Activo" : "Desactivado"}

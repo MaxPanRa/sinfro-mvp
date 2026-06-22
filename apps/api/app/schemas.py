@@ -82,6 +82,15 @@ class CredentialTestIn(BaseModel):
     phoneNumber: str | None = None
 
 
+class ApiUsageOut(BaseModel):
+    provider: str
+    used: int
+    quotaLimit: int | None = None
+    period: str = "none"          # month | rolling7 | none
+    daysLeft: int | None = None   # para rolling7 (Jooble): días hasta renovar
+    label: str = ""               # texto listo para la UI
+
+
 class CredentialOut(BaseModel):
     id: str
     group: str
@@ -91,6 +100,8 @@ class CredentialOut(BaseModel):
     status: str
     maskedKey: str
     lastTest: str
+    adminManaged: bool = False    # prestada por el admin → el usuario no la quita
+    usage: ApiUsageOut | None = None
 
 
 class ProfileSkillIn(BaseModel):
@@ -196,6 +207,7 @@ class AdminUserOut(BaseModel):
     totalProfiles: int
     createdAt: datetime | None = None
     aiAssignments: list[AdminAiAssignmentItem] = Field(default_factory=list)
+    apiGrants: list[str] = Field(default_factory=list)  # providers que el admin le prestó
 
 
 class AdminAiAssignIn(BaseModel):
@@ -208,6 +220,32 @@ class AdminAiAssignIn(BaseModel):
 class AdminAiUnassignIn(BaseModel):
     userIds: list[int]
     tasks: list[str] = Field(default_factory=list)
+
+
+class AdminApiLendIn(BaseModel):
+    userIds: list[int]
+    provider: str
+
+
+class AdminApiUnlendIn(BaseModel):
+    userIds: list[int]
+    provider: str
+
+
+class AdminApiUsageIn(BaseModel):
+    provider: str
+    used: int | None = None
+    quotaLimit: int | None = None
+    period: str | None = None        # month | rolling7 | none
+    renewDays: int | None = None
+    resetRenewal: bool = False       # reinicia el periodo de renovación (Jooble) a hoy
+
+
+class AdminLendableOut(BaseModel):
+    provider: str
+    name: str
+    connected: bool
+    usage: ApiUsageOut | None = None
 
 
 class AdminCodeOut(BaseModel):

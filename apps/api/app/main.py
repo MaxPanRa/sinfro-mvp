@@ -25,8 +25,8 @@ from app.core.google import GMAIL_SEND_SCOPE, build_google_auth_url, exchange_co
 from app.core.security import create_access_token, decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret, hash_password, hash_token, mask_secret, read_access_token, verify_password
 from app.db.redis import get_redis
 from app.db.session import SessionLocal, get_db
-from app.models import AiTaskAssignment, ApiCredential, CvDocument, FriendFamilyCode, JobEvaluation, JobPosting, JobRun, OAuthAccount, PendingRegistration, Profile, SubscriptionPlan, User, UserSubscription, UserTheme
-from app.schemas import AdminAiAssignIn, AdminAiAssignmentItem, AdminAiUnassignIn, AdminAssignCodeIn, AdminAssignResultOut, AdminCodeOut, AdminCodeUpdateIn, AdminPlanChangeIn, AdminUserOut, AdminUserStatusIn, AiAssignmentItem, AiConfigIn, AiProviderConfigOut, ConfirmEmailIn, CredentialIn, CredentialOut, CredentialTestIn, CoverLetterIn, CoverLetterOut, GmailStatusOut, GoogleAuthStartOut, JobEvaluationOut, JobStatusIn, JobTranslationIn, JobTranslationOut, LoginIn, PlanOut, ProfileIn, RegisterIn, RegisterStartOut, SubscriptionCodeIn, SubscriptionOut, ThemeIn, ThemeOut, TokenOut, UserOut
+from app.models import AiTaskAssignment, ApiCredential, ApiCredentialGrant, ApiUsage, CvDocument, FriendFamilyCode, JobEvaluation, JobPosting, JobRun, OAuthAccount, PendingRegistration, Profile, SubscriptionPlan, User, UserSubscription, UserTheme
+from app.schemas import AdminAiAssignIn, AdminAiAssignmentItem, AdminAiUnassignIn, AdminApiLendIn, AdminApiUnlendIn, AdminApiUsageIn, AdminLendableOut, AdminAssignCodeIn, AdminAssignResultOut, AdminCodeOut, AdminCodeUpdateIn, AdminPlanChangeIn, AdminUserOut, AdminUserStatusIn, AiAssignmentItem, AiConfigIn, AiProviderConfigOut, ApiUsageOut, ConfirmEmailIn, CredentialIn, CredentialOut, CredentialTestIn, CoverLetterIn, CoverLetterOut, GmailStatusOut, GoogleAuthStartOut, JobEvaluationOut, JobStatusIn, JobTranslationIn, JobTranslationOut, LoginIn, PlanOut, ProfileIn, RegisterIn, RegisterStartOut, SubscriptionCodeIn, SubscriptionOut, ThemeIn, ThemeOut, TokenOut, UserOut
 from app.seed import GLOBAL_POOL_EMAIL, seed_demo_data, seed_dev_data
 
 app = FastAPI(title=settings.project_name)
@@ -75,6 +75,70 @@ def load_credential_value(db: Session, user_id: int, provider: str) -> str | Non
         return decrypt_secret(row.encrypted_value)
     except Exception:  # noqa: BLE001 — credencial corrupta
         return None
+
+
+# APIs de búsqueda/scraping que el admin puede prestar a usuarios.
+LENDABLE_PROVIDERS = ("apify", "serpapi", "adzuna", "jooble")
+
+# Cuota local por proveedor (espejo del worker). apify: sin cuota (cobra por uso).
+PROVIDER_USAGE_DEFAULTS = {
+    "serpapi": {"quota_limit": 250, "period": "month", "renew_days": None},
+    "adzuna": {"quota_limit": 250, "period": "month", "renew_days": None},
+    "jooble": {"quota_limit": None, "period": "rolling7", "renew_days": 7},
+    "apify": {"quota_limit": None, "period": "none", "renew_days": None},
+}
+
+
+def get_or_create_api_usage(db: Session, owner_id: int, provider: str) -> ApiUsage:
+    usage = db.scalar(select(ApiUsage).where(ApiUsage.user_id == owner_id, ApiUsage.provider == provider))
+    if usage:
+        return usage
+    d = PROVIDER_USAGE_DEFAULTS.get(provider, {"quota_limit": None, "period": "none", "renew_days": None})
+    usage = ApiUsage(user_id=owner_id, provider=provider, used=0, quota_limit=d["quota_limit"], period=d["period"], period_start=datetime.now(timezone.utc), renew_days=d["renew_days"])
+    db.add(usage)
+    db.flush()
+    return usage
+
+
+def _aware(value):
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def usage_to_out(usage: ApiUsage | None, provider: str) -> ApiUsageOut | None:
+    """Convierte una fila de uso en payload para la UI (etiqueta + días restantes)."""
+    if usage is None:
+        return None
+    now = datetime.now(timezone.utc)
+    used = usage.used or 0
+    days_left = None
+    if usage.period == "month":
+        start = _aware(usage.period_start)
+        if start and (start.year, start.month) != (now.year, now.month):
+            used = 0
+        label = f"{used}/{usage.quota_limit} este mes" if usage.quota_limit else f"{used} usos este mes"
+    elif usage.period == "rolling7":
+        start = _aware(usage.period_start)
+        renew = usage.renew_days or 7
+        elapsed = (now - start).days if start else 0
+        days_left = max(0, renew - elapsed)
+        label = f"renovar en {days_left} día(s)" if days_left > 0 else "renovación vencida"
+    else:
+        label = f"{used} usos · sin cuota (cobra por uso)"
+    return ApiUsageOut(provider=provider, used=used, quotaLimit=usage.quota_limit, period=usage.period, daysLeft=days_left, label=label)
+
+
+def effective_usage_for(db: Session, user_id: int, provider: str) -> ApiUsage | None:
+    """La fila de uso que aplica al usuario para un provider: la suya o, si es una
+    API prestada por el admin, la del admin (el cupo se comparte)."""
+    own = db.scalar(select(ApiCredential).where(ApiCredential.user_id == user_id, ApiCredential.provider == provider))
+    if own:
+        return db.scalar(select(ApiUsage).where(ApiUsage.user_id == user_id, ApiUsage.provider == provider))
+    grant = db.scalar(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user_id, ApiCredentialGrant.provider == provider))
+    if grant:
+        return db.scalar(select(ApiUsage).where(ApiUsage.user_id == grant.credential_user_id, ApiUsage.provider == provider))
+    return None
 
 
 def _request_json(url: str, *, method: str = "GET", params: dict | None = None, payload: dict | None = None, timeout: int = 30) -> dict:
@@ -610,6 +674,7 @@ def admin_user_payload(db: Session, user: User) -> AdminUserOut:
         AdminAiAssignmentItem(task=row.task, provider=row.provider, model=row.model or ai.default_model(row.provider))
         for row in ai_rows
     ]
+    api_grants = [grant.provider for grant in db.scalars(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user.id)).all()]
     return AdminUserOut(
         id=user.id,
         email=user.email,
@@ -622,6 +687,7 @@ def admin_user_payload(db: Session, user: User) -> AdminUserOut:
         totalProfiles=len(profiles),
         createdAt=user.created_at,
         aiAssignments=ai_assignments,
+        apiGrants=api_grants,
     )
 
 
@@ -676,6 +742,89 @@ def admin_ai_unassign(payload: AdminAiUnassignIn, db: DbDep, _admin: Annotated[U
         updated.append(target)
     db.commit()
     return [admin_user_payload(db, target) for target in updated]
+
+
+@app.get("/admin/api/lendable", response_model=list[AdminLendableOut])
+def admin_api_lendable(db: DbDep, admin: Annotated[User, Depends(require_admin)]) -> list[AdminLendableOut]:
+    """APIs de búsqueda/scraping que el admin tiene conectadas y puede prestar, con su uso."""
+    out: list[AdminLendableOut] = []
+    for provider_id in LENDABLE_PROVIDERS:
+        meta = PROVIDERS.get(provider_id)
+        if not meta:
+            continue
+        connected = bool(load_credential_value(db, admin.id, provider_id))
+        usage = db.scalar(select(ApiUsage).where(ApiUsage.user_id == admin.id, ApiUsage.provider == provider_id))
+        out.append(AdminLendableOut(provider=provider_id, name=meta[1], connected=connected, usage=usage_to_out(usage, provider_id)))
+    return out
+
+
+@app.post("/admin/api/lend", response_model=list[AdminUserOut])
+def admin_api_lend(payload: AdminApiLendIn, db: DbDep, admin: Annotated[User, Depends(require_admin)]) -> list[AdminUserOut]:
+    """Presta una API del admin (su key) a uno o más usuarios. Acceso compartido."""
+    if payload.provider not in LENDABLE_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Esa API no se puede prestar")
+    if not load_credential_value(db, admin.id, payload.provider):
+        raise HTTPException(status_code=400, detail="Conecta primero tu API key de este proveedor")
+    get_or_create_api_usage(db, admin.id, payload.provider)  # asegura fila de uso
+    updated: list[User] = []
+    for user_id in dict.fromkeys(payload.userIds):
+        target = db.get(User, user_id)
+        if not target or target.email == GLOBAL_POOL_EMAIL or target.id == admin.id:
+            continue
+        grant = db.scalar(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user_id, ApiCredentialGrant.provider == payload.provider))
+        if not grant:
+            db.add(ApiCredentialGrant(user_id=user_id, provider=payload.provider, credential_user_id=admin.id))
+        else:
+            grant.credential_user_id = admin.id
+        updated.append(target)
+    db.commit()
+    return [admin_user_payload(db, target) for target in updated]
+
+
+@app.post("/admin/api/unlend", response_model=list[AdminUserOut])
+def admin_api_unlend(payload: AdminApiUnlendIn, db: DbDep, _admin: Annotated[User, Depends(require_admin)]) -> list[AdminUserOut]:
+    updated: list[User] = []
+    for user_id in dict.fromkeys(payload.userIds):
+        target = db.get(User, user_id)
+        if not target:
+            continue
+        db.execute(delete(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user_id, ApiCredentialGrant.provider == payload.provider))
+        updated.append(target)
+    db.commit()
+    return [admin_user_payload(db, target) for target in updated]
+
+
+@app.patch("/admin/api/usage", response_model=AdminLendableOut)
+def admin_api_usage(payload: AdminApiUsageIn, db: DbDep, admin: Annotated[User, Depends(require_admin)]) -> AdminLendableOut:
+    """Ajusta el contador de uso de una API del admin (sembrar/corregir)."""
+    if payload.provider not in LENDABLE_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Proveedor no soportado")
+    usage = get_or_create_api_usage(db, admin.id, payload.provider)
+    if payload.used is not None:
+        usage.used = max(0, payload.used)
+    if payload.quotaLimit is not None:
+        usage.quota_limit = max(0, payload.quotaLimit) or None
+    if payload.period is not None:
+        usage.period = payload.period
+    if payload.renewDays is not None:
+        usage.renew_days = max(1, payload.renewDays)
+    if payload.resetRenewal:
+        usage.period_start = datetime.now(timezone.utc)
+    db.commit()
+    meta = PROVIDERS.get(payload.provider)
+    return AdminLendableOut(provider=payload.provider, name=meta[1] if meta else payload.provider, connected=bool(load_credential_value(db, admin.id, payload.provider)), usage=usage_to_out(usage, payload.provider))
+
+
+@app.get("/me/api-usage", response_model=list[ApiUsageOut])
+def my_api_usage(db: DbDep, user: Annotated[User, Depends(current_user)]) -> list[ApiUsageOut]:
+    """Uso efectivo de las APIs de búsqueda/scraping del usuario (propias o prestadas)."""
+    out: list[ApiUsageOut] = []
+    for provider_id in LENDABLE_PROVIDERS:
+        usage = effective_usage_for(db, user.id, provider_id)
+        payload = usage_to_out(usage, provider_id)
+        if payload:
+            out.append(payload)
+    return out
 
 
 @app.patch("/admin/users/{user_id}/plan", response_model=AdminUserOut)
@@ -1179,17 +1328,24 @@ def update_job_status(job_id: int, payload: JobStatusIn, db: DbDep, user: Annota
 def credentials(db: DbDep, user: Annotated[User, Depends(current_user)]) -> list[CredentialOut]:
     saved = {row.provider: row for row in db.scalars(select(ApiCredential).where(ApiCredential.user_id == user.id)).all()}
     gmail = db.scalar(select(OAuthAccount).where(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google"))
+    granted = {grant.provider for grant in db.scalars(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user.id)).all()}
     result = []
     for provider_id, meta in PROVIDERS.items():
         if provider_id == "gmail":
             connected = bool(gmail and GMAIL_SEND_SCOPE in (gmail.scopes or []))
             result.append(CredentialOut(id=provider_id, group=meta[0], name=meta[1], glyph=meta[2], iconColor=meta[3], status="connected" if connected else "disconnected", maskedKey=gmail.email if gmail else "sin Google conectado", lastTest="gmail.send activo" if connected else "requiere permiso Gmail"))
             continue
-        if provider_id == "whatsapp" and provider_id not in saved:
+        row = saved.get(provider_id)
+        is_granted = provider_id in granted and not row
+        usage = usage_to_out(effective_usage_for(db, user.id, provider_id), provider_id) if provider_id in LENDABLE_PROVIDERS else None
+        if is_granted:
+            # Prestada por el admin: el usuario la ve conectada pero no la puede quitar.
+            result.append(CredentialOut(id=provider_id, group=meta[0], name=meta[1], glyph=meta[2], iconColor=meta[3], status="connected", maskedKey="prestada por el administrador", lastTest="activa (key del admin)", adminManaged=True, usage=usage))
+            continue
+        if provider_id == "whatsapp" and not row:
             result.append(CredentialOut(id=provider_id, group=meta[0], name=meta[1], glyph=meta[2], iconColor=meta[3], status="disconnected", maskedKey="sin WhatsApp conectado", lastTest="requiere prueba"))
             continue
-        row = saved.get(provider_id)
-        result.append(CredentialOut(id=provider_id, group=meta[0], name=meta[1], glyph=meta[2], iconColor=meta[3], status="connected" if row else "disconnected", maskedKey=row.masked_value if row else "— sin credencial —", lastTest=row.last_test if row and row.last_test else "nunca probado"))
+        result.append(CredentialOut(id=provider_id, group=meta[0], name=meta[1], glyph=meta[2], iconColor=meta[3], status="connected" if row else "disconnected", maskedKey=row.masked_value if row else "— sin credencial —", lastTest=row.last_test if row and row.last_test else "nunca probado", usage=usage if row else None))
     return result
 
 
@@ -1201,6 +1357,12 @@ def delete_credential(provider_id: str, db: DbDep, user: Annotated[User, Depends
     """
     if provider_id not in PROVIDERS:
         raise HTTPException(status_code=404, detail="Unknown provider")
+    # No se puede quitar una API prestada por el admin (mientras no tengas la tuya).
+    own = db.scalar(select(ApiCredential).where(ApiCredential.user_id == user.id, ApiCredential.provider == provider_id))
+    if not own:
+        grant = db.scalar(select(ApiCredentialGrant).where(ApiCredentialGrant.user_id == user.id, ApiCredentialGrant.provider == provider_id))
+        if grant:
+            raise HTTPException(status_code=403, detail="Esta API la asignó el administrador; no puedes quitarla.")
     if provider_id == "gmail":
         account = db.scalar(select(OAuthAccount).where(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google"))
         if account:

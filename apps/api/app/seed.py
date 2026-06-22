@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete, select
@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.security import encrypt_secret, mask_secret
 from app.models import (
     ApiCredential,
+    ApiUsage,
     FriendFamilyCode,
     JobEvaluation,
     JobPosting,
@@ -61,11 +62,38 @@ class DemoSeedResult:
     evaluations: int
 
 
+ADMIN_EMAIL = "maxpanra@gmail.com"
+
+
+def seed_admin_api_usage(db: Session) -> None:
+    """Siembra (una sola vez) los usos iniciales de las APIs del admin maxpanra.
+    Después el contador sube solo con cada escaneo. Idempotente."""
+    admin = db.scalar(select(User).where(User.email == ADMIN_EMAIL))
+    if not admin:
+        return
+    now = datetime.now(timezone.utc)
+    seeds = [
+        {"provider": "serpapi", "used": 27, "quota_limit": 250, "period": "month", "period_start": now, "renew_days": None},
+        {"provider": "adzuna", "used": 27, "quota_limit": 250, "period": "month", "period_start": now, "renew_days": None},
+        {"provider": "jooble", "used": 0, "quota_limit": None, "period": "rolling7", "period_start": now - timedelta(days=4), "renew_days": 7},
+    ]
+    changed = False
+    for seed in seeds:
+        exists = db.scalar(select(ApiUsage).where(ApiUsage.user_id == admin.id, ApiUsage.provider == seed["provider"]))
+        if exists:
+            continue
+        db.add(ApiUsage(user_id=admin.id, **seed))
+        changed = True
+    if changed:
+        db.commit()
+
+
 def seed_dev_data(db: Session) -> User:
     result = seed_demo_data(db)
     user = db.scalar(select(User).where(User.email == result.user_email))
     if not user:
         raise RuntimeError("Demo user was not created")
+    seed_admin_api_usage(db)
     return user
 
 

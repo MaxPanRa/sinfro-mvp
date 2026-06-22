@@ -136,11 +136,17 @@ export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onS
                     animated={provider.status === "testing"}
                   />
                 </div>
-                <div className="mono faint" style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, fontSize: 11.5 }}>
+                <div className="mono faint" style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, fontSize: 11.5, flexWrap: "wrap" }}>
                   <span style={{ color: connected ? "var(--text2)" : "var(--faint)" }}>{provider.maskedKey}</span>
                   <span>·</span>
                   <span>{provider.lastTest}</span>
+                  {provider.usage ? <><span>·</span><span style={{ color: "var(--accent)" }}>Uso: {provider.usage.label}</span></> : null}
                 </div>
+                {provider.adminManaged ? (
+                  <div className="notice" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, marginTop: 8 }}>
+                    <Lock size={13} /> El administrador te prestó esta API. La usas con su key y no la puedes quitar.
+                  </div>
+                ) : null}
                 {aiConfig && onAiConfig && connected ? (
                   <AiTaskRows config={aiConfig} onChange={(assignments) => onAiConfig(provider.id, assignments)} />
                 ) : null}
@@ -271,6 +277,8 @@ export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onS
                     <Button variant="danger" onClick={() => { if (window.confirm("¿Desconectar Gmail? Dejarás de recibir el correo de resumen de vacantes.")) void onDelete(provider.id).catch(() => undefined); }}>Desconectar</Button>
                   ) : null}
                 </>
+              ) : provider.adminManaged ? (
+                <span className="status-badge" style={{ color: "var(--accent)", background: "var(--accentW2)" }}>Prestada por admin</span>
               ) : (
                 <>
                   {provider.id !== "whatsapp" ? <Button onClick={() => { void onTest(provider.id).catch(() => undefined); }}>Probar</Button> : null}
