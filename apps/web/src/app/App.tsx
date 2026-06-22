@@ -329,19 +329,47 @@ export function App() {
     }
     setSyncing(true);
     // Búsqueda propia del perfil activo (sus keywords) → alimenta su bandeja.
+    let run: SyncRun;
     try {
-      const run = await apiClient.runSync(activeProfileId);
+      run = await apiClient.runSync(activeProfileId);
       setSyncRuns((current) => [run, ...current]);
     } catch (error) {
       setSyncRuns((current) => [{ id: Date.now(), source: "Manual scan", status: "failed", found: 0, duration: "00:00", started: "ahora", createdAt: new Date().toISOString(), error: error instanceof Error ? error.message : "No se pudo iniciar el escaneo" }, ...current]);
       setSyncing(false);
       return;
     }
-    window.setTimeout(() => {
+    // Sondeamos el estado REAL del run hasta que el servicio de escaneo termine
+    // (success/failed). Mientras tanto `syncing` sigue true → el botón queda
+    // bloqueado y muestra "Escaneando". Al terminar, recargamos la bandeja para
+    // que el inbox se actualice solo si el usuario está parado en él.
+    const runId = run.id;
+    const startedAt = Date.now();
+    const maxWaitMs = 180000; // 3 min de seguridad por si el worker no responde
+    const finish = () => {
       setSyncing(false);
       apiClient.getSyncRuns().then(setSyncRuns).catch(() => undefined);
+      // Recargar jobs actualiza también los contadores (counts es un useMemo de jobs).
       apiClient.getJobs(activeProfileId).then(setJobs).catch(() => undefined);
-    }, 2600);
+    };
+    const poll = async () => {
+      try {
+        const runs = await apiClient.getSyncRuns();
+        setSyncRuns(runs);
+        const current = runs.find((item) => item.id === runId);
+        if (current && current.status !== "running" && current.status !== "pending") {
+          finish();
+          return;
+        }
+      } catch {
+        // Error de red transitorio: seguimos sondeando hasta el límite.
+      }
+      if (Date.now() - startedAt > maxWaitMs) {
+        finish();
+        return;
+      }
+      window.setTimeout(poll, 2500);
+    };
+    window.setTimeout(poll, 2500);
   };
 
   const openNewProfile = () => {
@@ -416,6 +444,13 @@ export function App() {
     const saved = await apiClient.saveCredential(payload);
     setCredentials((current) => current.map((credential) => (credential.id === payload.providerId ? saved : credential)));
     // Si es un proveedor de IA, refresca su config (queda "conectado" y habilita modelo/tarea).
+    apiClient.getAiProviders().then(setAiProviders).catch(() => undefined);
+  };
+
+  const deleteCredential = async (id: string) => {
+    await apiClient.deleteCredential(id);
+    // Recargamos la lista para reflejar el estado real (gmail/whatsapp desconectados).
+    apiClient.getCredentials().then(setCredentials).catch(() => undefined);
     apiClient.getAiProviders().then(setAiProviders).catch(() => undefined);
   };
 
@@ -584,7 +619,7 @@ export function App() {
         />
       ) : null}
 
-      {view === "settings" ? <SettingsView credentials={credentials} aiProviders={aiProviders} onAiConfig={updateAiConfig} onSaveCredential={saveCredential} onTestCredential={testCredential} onConnectGoogle={connectGoogle} /> : null}
+      {view === "settings" ? <SettingsView credentials={credentials} aiProviders={aiProviders} onAiConfig={updateAiConfig} onSaveCredential={saveCredential} onTestCredential={testCredential} onConnectGoogle={connectGoogle} onDeleteCredential={deleteCredential} /> : null}
       {view === "jobs" ? <SyncRunsView runs={syncRuns} totalJobs={counts.total} nuevas={counts.nuevas} /> : null}
       {view === "subscription" ? <SubscriptionView plans={plans} subscription={subscription} /> : null}
       {view === "admin_users" && user?.isAdmin ? <AdminUsersView plans={plans} currentUserId={user.id} /> : null}

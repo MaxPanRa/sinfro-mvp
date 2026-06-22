@@ -1127,6 +1127,27 @@ def credentials(db: DbDep, user: Annotated[User, Depends(current_user)]) -> list
     return result
 
 
+@app.delete("/credentials/{provider_id}")
+def delete_credential(provider_id: str, db: DbDep, user: Annotated[User, Depends(current_user)]) -> dict:
+    """Quita una conexión para que dejen de llegar notificaciones por ese canal.
+    - gmail: elimina la cuenta de Google (corta el correo de resumen).
+    - whatsapp / resto: elimina la API key guardada.
+    """
+    if provider_id not in PROVIDERS:
+        raise HTTPException(status_code=404, detail="Unknown provider")
+    if provider_id == "gmail":
+        account = db.scalar(select(OAuthAccount).where(OAuthAccount.user_id == user.id, OAuthAccount.provider == "google"))
+        if account:
+            db.delete(account)
+            db.commit()
+        return {"id": provider_id, "status": "disconnected"}
+    row = db.scalar(select(ApiCredential).where(ApiCredential.user_id == user.id, ApiCredential.provider == provider_id))
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"id": provider_id, "status": "disconnected"}
+
+
 @app.post("/credentials", response_model=CredentialOut)
 def save_credential(payload: CredentialIn, db: DbDep, redis: RedisDep, user: Annotated[User, Depends(current_user)]) -> CredentialOut:
     if payload.providerId not in PROVIDERS:

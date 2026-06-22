@@ -77,7 +77,7 @@ export function TopBar({ view, density, syncing, lastSyncAt, theme, accent, navO
         {themeMenuOpen ? <ThemeMenu theme={theme} accent={accent} density={density} onTheme={onTheme} onAccent={onAccent} onDensity={onDensity} /> : null}
       </div>
 
-      <Button variant="primary" onClick={onRunSync} icon={<Zap size={14} style={{ animation: syncing ? "pulse 0.9s infinite" : undefined }} />}>
+      <Button variant="primary" onClick={onRunSync} disabled={syncing} title={syncing ? "Escaneando... espera a que termine" : undefined} icon={<Zap size={14} style={{ animation: syncing ? "pulse 0.9s infinite" : undefined }} />}>
         <span className="scan-label">{syncing ? "Escaneando..." : "Escanear ahora"}</span>
       </Button>
     </header>

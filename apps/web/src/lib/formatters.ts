@@ -62,17 +62,26 @@ export function initialsOf(name: string) {
   return name.trim().split(/\s+/).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "P";
 }
 
-// Análisis SEMÁNTICO honesto: compara el perfil real contra el TEXTO de la
-// vacante (tags + descripción). El score se deriva del match real (ponderando
-// skills), no del heurístico preliminar. Es aproximado: la IA es la precisa.
+// Análisis SEMÁNTICO honesto: compara el perfil real (skills + palabras clave)
+// contra el TEXTO de la vacante (tags + descripción). El score se deriva del match
+// real, no del heurístico preliminar. Ponderación: contenido (skills y palabras
+// clave) 60%, esquema 20%, ubicación 20%. Espejo de semantic_match_score (worker).
 export function buildSemanticAnalysis(job: Job, profile: Profile) {
-  // Texto completo de la vacante donde buscar las skills del candidato.
+  // Texto completo de la vacante donde buscar los términos del candidato.
   const jobText = `${(job.skills || []).join(" ")} ${job.description || ""}`.toLowerCase();
-  const profileSkills = (profile.skills || []).map((skill) => skill.name).filter(Boolean);
-  const matched = profileSkills.filter((name) => jobText.includes(name.toLowerCase()));
-  const missing = profileSkills.filter((name) => !jobText.includes(name.toLowerCase()));
-  // % de TUS skills que la vacante realmente menciona (relevancia de tu perfil).
-  const skillsScore = profileSkills.length ? Math.round((matched.length / profileSkills.length) * 100) : 0;
+  // Términos del perfil: skills + palabras clave, deduplicados (case-insensitive).
+  const rawTerms = [...(profile.skills || []).map((skill) => skill.name), ...(profile.keywords || [])].filter(Boolean);
+  const seen = new Set<string>();
+  const terms = rawTerms.filter((term) => {
+    const key = term.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const matched = terms.filter((term) => jobText.includes(term.toLowerCase()));
+  const missing = terms.filter((term) => !jobText.includes(term.toLowerCase()));
+  // % de TUS skills/keywords que la vacante realmente menciona (relevancia del perfil).
+  const relevanceScore = terms.length ? Math.round((matched.length / terms.length) * 100) : 0;
 
   const profileModality = (profile.modality || "").toLowerCase();
   const remote = `${job.modality} ${job.location}`.toLowerCase().includes("remot");
@@ -82,18 +91,17 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
   const jobLoc = (job.location || "").toLowerCase();
   const locationScore = remote || !jobLoc ? 100 : profileLoc && (profileLoc.includes(jobLoc) || jobLoc.includes(profileLoc) || jobLoc.includes("latam")) ? 100 : 55;
 
-  // Ponderación: las skills mandan; modalidad y ubicación pesan poco (suelen ser
-  // remoto/100%). Así una vacante sin relación con tu perfil da un score bajo real.
-  const score = Math.round(skillsScore * 0.7 + modalityScore * 0.15 + locationScore * 0.15);
+  // Ponderación pedida: contenido manda (60%), esquema y ubicación 20% cada uno.
+  const score = Math.round(relevanceScore * 0.6 + modalityScore * 0.2 + locationScore * 0.2);
 
   const reasons = matched.length
-    ? [`${matched.length} de tus ${profileSkills.length} skills aparecen en esta vacante: ${matched.slice(0, 6).join(", ")}.`]
-    : ["Ninguna de tus skills aparece en el texto de la vacante: poca relación con tu perfil."];
-  if (modalityScore >= 85) reasons.push(`Modalidad ${job.modality.toLowerCase()} compatible con tu preferencia.`);
+    ? [`${matched.length} de tus ${terms.length} skills/palabras clave aparecen en esta vacante: ${matched.slice(0, 6).join(", ")}.`]
+    : ["Ninguna de tus skills o palabras clave aparece en el texto de la vacante: poca relación con tu perfil."];
+  if (modalityScore >= 85) reasons.push(`Esquema ${job.modality.toLowerCase()} compatible con tu preferencia.`);
   const gaps = [
-    skillsScore < 40
-      ? "El match de skills es bajo: esta vacante exige tecnologías que tu perfil no refleja."
-      : `${missing.length} de tus skills no se mencionan en esta vacante.`,
+    relevanceScore < 40
+      ? "El match de contenido es bajo: esta vacante exige skills/temas que tu perfil no refleja."
+      : `${missing.length} de tus skills/palabras clave no se mencionan en esta vacante.`,
     "El análisis semántico es aproximado (busca coincidencias de texto). Usa el análisis con IA para una evaluación precisa.",
   ];
 
@@ -102,8 +110,8 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
     reasons,
     gaps,
     breakdown: [
-      { key: "Skills relevantes", value: skillsScore, color: scoreBand(skillsScore).color },
-      { key: "Modalidad", value: modalityScore, color: scoreBand(modalityScore).color },
+      { key: "Skills y palabras clave", value: relevanceScore, color: scoreBand(relevanceScore).color },
+      { key: "Esquema", value: modalityScore, color: scoreBand(modalityScore).color },
       { key: "Ubicación", value: locationScore, color: scoreBand(locationScore).color },
     ],
     matched,

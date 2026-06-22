@@ -411,6 +411,19 @@
   background: var(--accentH);
 }
 
+.icon-button:disabled,
+.ghost-button:disabled,
+.primary-button:disabled,
+.danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: saturate(0.7);
+}
+
+.primary-button:disabled:hover {
+  background: var(--accent);
+}
+
 .primary-button:active,
 .ghost-button:active,
 .danger-button:active {

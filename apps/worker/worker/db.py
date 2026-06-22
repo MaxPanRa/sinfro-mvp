@@ -324,22 +324,27 @@ def score_profile_match(job: JobPosting, terms: list[str]) -> int:
 
 
 def semantic_match_score(skills: list[str] | None, description: str | None, modality: str | None, location: str | None, profile: Profile) -> int:
-    """Análisis SEMÁNTICO local: compara las skills reales del perfil contra el TEXTO
-    de la vacante (skills + descripción) y pondera modalidad/ubicación. Réplica del
-    ``buildSemanticAnalysis`` del frontend: skills 70%, modalidad 15%, ubicación 15%.
-    Determinista y sin IA; es el porcentaje que se muestra al escanear y hacer match.
+    """Análisis SEMÁNTICO local: compara las skills + palabras clave reales del perfil
+    contra el TEXTO de la vacante (skills + descripción) y pondera esquema/ubicación.
+    Réplica del ``buildSemanticAnalysis`` del frontend: contenido (skills y palabras
+    clave) 60%, esquema 20%, ubicación 20%. Determinista y sin IA; es el porcentaje
+    que se muestra al escanear y hacer match.
     """
     job_text = f"{' '.join(skills or [])} {description or ''}".lower()
-    profile_skills = [
+    terms: list[str] = [
         str(skill["name"]).strip()
         for skill in (profile.skills or [])
         if isinstance(skill, dict) and str(skill.get("name") or "").strip()
     ]
-    if profile_skills:
-        matched = sum(1 for name in profile_skills if name.lower() in job_text)
-        skills_score = round(matched / len(profile_skills) * 100)
+    terms += [str(keyword).strip() for keyword in (profile.keywords or []) if str(keyword or "").strip()]
+    # Dedup case-insensitive para no contar dos veces lo que esté en skills y keywords.
+    seen: set[str] = set()
+    unique_terms = [term for term in terms if not (term.lower() in seen or seen.add(term.lower()))]
+    if unique_terms:
+        matched = sum(1 for term in unique_terms if term.lower() in job_text)
+        relevance_score = round(matched / len(unique_terms) * 100)
     else:
-        skills_score = 0
+        relevance_score = 0
 
     profile_modality = (profile.modality or "").lower()
     remote = "remot" in f"{modality or ''} {location or ''}".lower()
@@ -359,7 +364,7 @@ def semantic_match_score(skills: list[str] | None, description: str | None, moda
     else:
         location_score = 55
 
-    score = round(skills_score * 0.7 + modality_score * 0.15 + location_score * 0.15)
+    score = round(relevance_score * 0.6 + modality_score * 0.2 + location_score * 0.2)
     return max(0, min(99, score))
 
 

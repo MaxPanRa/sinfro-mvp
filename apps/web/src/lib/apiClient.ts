@@ -320,6 +320,10 @@ export const apiClient = {
     };
   },
 
+  async deleteCredential(providerId: string): Promise<{ id: string; status: string }> {
+    return request(`/credentials/${providerId}`, { method: "DELETE" }, { id: providerId, status: "disconnected" });
+  },
+
   async testCredential(providerId: string, payload?: CredentialTestPayload): Promise<{ ok: boolean; providerId: string; message: string; maskedKey?: string }> {
     // Sin fallback: si el backend rechaza la prueba (key inválida, etc.) debe
     // propagarse el error para que la UI muestre el fallo real.

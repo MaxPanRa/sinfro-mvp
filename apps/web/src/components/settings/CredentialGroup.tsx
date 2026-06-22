@@ -16,6 +16,7 @@ interface CredentialGroupProps {
   onSave: (payload: CredentialPayload) => Promise<void>;
   onTest: (id: string, payload?: Partial<CredentialPayload>) => Promise<{ maskedKey?: string } | void>;
   onConnectGoogle?: () => Promise<void>;
+  onDelete?: (id: string) => Promise<void>;
 }
 
 const AI_TASK_OPTIONS: { value: AiTask; label: string }[] = [
@@ -77,7 +78,7 @@ const CREDENTIAL_HELP: Record<string, { title: string; steps: CredentialHelpStep
   },
 };
 
-export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onSave, onTest, onConnectGoogle }: CredentialGroupProps) {
+export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onSave, onTest, onConnectGoogle, onDelete }: CredentialGroupProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [helpProviderId, setHelpProviderId] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
@@ -264,7 +265,12 @@ export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onS
                 ) : null}
               </div>
               {provider.id === "gmail" ? (
-                <Button variant={connected ? "ghost" : "primary"} onClick={onConnectGoogle}>{connected ? "Reconectar" : "Conectar Google"}</Button>
+                <>
+                  <Button variant={connected ? "ghost" : "primary"} onClick={onConnectGoogle}>{connected ? "Reconectar" : "Conectar Google"}</Button>
+                  {connected && onDelete ? (
+                    <Button variant="danger" onClick={() => { if (window.confirm("¿Desconectar Gmail? Dejarás de recibir el correo de resumen de vacantes.")) void onDelete(provider.id).catch(() => undefined); }}>Desconectar</Button>
+                  ) : null}
+                </>
               ) : (
                 <>
                   {provider.id !== "whatsapp" ? <Button onClick={() => { void onTest(provider.id).catch(() => undefined); }}>Probar</Button> : null}
@@ -276,6 +282,9 @@ export function CredentialGroup({ title, providers, aiProviders, onAiConfig, onS
                     closeCredentialEditor();
                     setEditingId(provider.id);
                   }}>{connected ? "Actualizar" : "Conectar"}</Button>
+                  {connected && onDelete ? (
+                    <Button variant="danger" onClick={() => { if (window.confirm(`¿Desconectar ${provider.name}?${provider.id === "whatsapp" ? " Dejarás de recibir notificaciones por WhatsApp." : ""}`)) void onDelete(provider.id).catch(() => undefined); }}>Desconectar</Button>
+                  ) : null}
                 </>
               )}
             </div>

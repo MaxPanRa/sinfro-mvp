@@ -10,11 +10,12 @@ interface SettingsViewProps {
   onSaveCredential: (payload: CredentialPayload) => Promise<void>;
   onTestCredential: (id: string, payload?: Partial<CredentialPayload>) => Promise<{ maskedKey?: string } | void>;
   onConnectGoogle: () => Promise<void>;
+  onDeleteCredential: (id: string) => Promise<void>;
 }
 
 const groupOrder = ["Correo", "Modelos de IA", "Busqueda & scraping", "Bolsas de empleo"];
 
-export function SettingsView({ credentials, aiProviders, onAiConfig, onSaveCredential, onTestCredential, onConnectGoogle }: SettingsViewProps) {
+export function SettingsView({ credentials, aiProviders, onAiConfig, onSaveCredential, onTestCredential, onConnectGoogle, onDeleteCredential }: SettingsViewProps) {
   return (
     <div className="view">
       <div className="view-inner is-narrow">
@@ -35,6 +36,7 @@ export function SettingsView({ credentials, aiProviders, onAiConfig, onSaveCrede
             onSave={onSaveCredential}
             onTest={onTestCredential}
             onConnectGoogle={onConnectGoogle}
+            onDelete={onDeleteCredential}
           />
         ))}
       </div>
