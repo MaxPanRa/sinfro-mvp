@@ -171,6 +171,16 @@ export function App() {
     setEvaluationByJob({});
   }, [user, activeProfileId]);
 
+  // Auto-reload del inbox: sin push en tiempo real, refrescamos las vacantes del
+  // perfil activo cada 5 minutos mientras el usuario está parado en la bandeja.
+  useEffect(() => {
+    if (!user || view !== "inbox") return;
+    const id = window.setInterval(() => {
+      apiClient.getJobs(activeProfileId).then(setJobs).catch(() => undefined);
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [user, view, activeProfileId]);
+
   // El estado "ya analizada" (botones deshabilitados) solo se reinicia cuando el
   // usuario cambia la IA/modelo asignado a "Análisis CV vs vacante".
   const comparatorKey = aiProviders

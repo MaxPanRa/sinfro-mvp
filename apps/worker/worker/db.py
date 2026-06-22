@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 import re
+import unicodedata
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -355,22 +356,35 @@ def semantic_match_score(skills: list[str] | None, description: str | None, moda
     else:
         modality_score = 50
 
-    profile_loc = (profile.location or "").lower()
-    job_loc = (location or "").lower()
-    if remote or not job_loc:
-        location_score = 100
-    elif profile_loc and (profile_loc in job_loc or job_loc in profile_loc or "latam" in job_loc):
-        location_score = 100
-    else:
-        location_score = 55
+    location_score = 100 if job_location_allowed(location, profile) else 55
 
-    score = round(relevance_score * 0.6 + modality_score * 0.2 + location_score * 0.2)
+    # La ubicación pesa más (lo demás se reparte entre contenido y esquema).
+    score = round(relevance_score * 0.5 + modality_score * 0.2 + location_score * 0.3)
     return max(0, min(99, score))
+
+
+def _strip_accents(value: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", value) if unicodedata.category(c) != "Mn")
+
+
+def job_location_allowed(location: str | None, profile: Profile) -> bool:
+    """Filtro duro de ubicación: la vacante se trae solo si NO tiene ubicación
+    definida, es remota, o coincide con alguna de las ubicaciones del perfil
+    (las partes separadas por coma de ``profile.location``). Si no, se descarta.
+    """
+    loc = _strip_accents((location or "").strip().lower())
+    if not loc or "remot" in loc or "latam" in loc:
+        return True
+    profile_loc = _strip_accents((profile.location or "").lower())
+    if not profile_loc:
+        return True  # perfil sin ubicación marcada: no filtramos por ubicación
+    tokens = [part.strip() for part in re.split(r"[,/|]", profile_loc) if len(part.strip()) >= 2]
+    return any(token and (token in loc or loc in token) for token in tokens)
 
 
 def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile: Profile, global_jobs: list[JobPosting]) -> int:
     terms = profile_terms(profile)
-    matches = [job for job in global_jobs if job_matches_profile(job, terms)]
+    matches = [job for job in global_jobs if job_matches_profile(job, terms) and job_location_allowed(job.location, profile)]
     matches = sorted(
         matches,
         key=lambda row: semantic_match_score(row.skills, row.description, row.modality, row.location, profile),
@@ -1167,6 +1181,10 @@ def credential_is_usable(value: str) -> bool:
 def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: int | None = None, profile: Profile | None = None) -> int:
     changed = 0
     for item in jobs:
+        # Filtro duro de ubicación: si el perfil define ubicación, solo traemos
+        # vacantes sin ubicación/remotas o que coincidan con la(s) del perfil.
+        if profile is not None and not job_location_allowed(item.get("location"), profile):
+            continue
         posting = db.scalar(
             select(JobPosting).where(
                 JobPosting.user_id == owner_id,

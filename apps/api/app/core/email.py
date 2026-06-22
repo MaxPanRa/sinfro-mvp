@@ -50,6 +50,45 @@ def send_verification_email(to_email: str, name: str, verification_url: str) -> 
     return True
 
 
+def send_new_user_admin_email(admin_email: str, new_user_email: str, new_user_name: str) -> bool:
+    """Avisa al administrador que se registró un usuario nuevo. True si se envió."""
+    if not smtp_configured():
+        print(f"[SMTP no configurado] Nuevo registro: {new_user_name or ''} <{new_user_email}>")
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = f"Nuevo registro en SinFro: {new_user_email}"
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = admin_email
+    message.set_content(
+        "\n".join(
+            [
+                "Se registró un nuevo usuario en SinFro:",
+                "",
+                f"Nombre: {new_user_name or '(sin nombre)'}",
+                f"Correo: {new_user_email}",
+            ]
+        )
+    )
+    message.add_alternative(
+        f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#10201a">
+          <h2>Nuevo registro en SinFro</h2>
+          <p><b>Nombre:</b> {new_user_name or '(sin nombre)'}</p>
+          <p><b>Correo:</b> {new_user_email}</p>
+        </div>
+        """,
+        subtype="html",
+    )
+
+    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
+        if settings.smtp_use_tls:
+            smtp.starttls()
+        smtp.login(settings.smtp_username, settings.smtp_password)
+        smtp.send_message(message)
+    return True
+
+
 def send_plan_assigned_email(to_email: str, name: str, plan_name: str) -> bool:
     """Avisa a un usuario que el admin le asignó un plan. Devuelve True si se envió."""
     if not smtp_configured():

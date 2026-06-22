@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Lock, X } from "lucide-react";
 import type { CredentialPayload, CredentialProvider } from "../../types/credential";
 import type { AiAssignment, AiProviderConfig, AiTask } from "../../lib/apiClient";
 import { providerIcon } from "../../lib/providerIcons";
@@ -386,13 +386,17 @@ const taskLabel = (task: AiTask) => AI_TASK_OPTIONS.find((option) => option.valu
 // Filas dinámicas (modelo + tarea) de un proveedor de IA. Un proveedor puede
 // atender varias tareas con modelos distintos; cada tarea, una sola IA.
 function AiTaskRows({ config, onChange }: { config: AiProviderConfig; onChange: (assignments: AiAssignment[]) => void }) {
-  const assigned = config.assignments;
-  const usedTasks = new Set(assigned.map((item) => item.task));
+  // Asignaciones puestas por el admin: solo se muestran, el usuario no las edita.
+  const adminRows = config.assignments.filter((item) => item.adminManaged);
+  const assigned = config.assignments.filter((item) => !item.adminManaged);
+  // Tareas ocupadas: propias + las bloqueadas por el admin (no se pueden reusar).
+  const usedTasks = new Set(config.assignments.map((item) => item.task));
   const lastModel = assigned.length ? assigned[assigned.length - 1].model : (config.defaultModel || config.models[0] || "");
   // Modelo de la fila nueva: por default el último usado; el usuario puede cambiarlo.
   const [newModel, setNewModel] = useState(lastModel);
   const remainingTasks = AI_TASKS.filter((task) => !usedTasks.has(task));
 
+  // onChange envía solo las asignaciones PROPIAS; el backend conserva las del admin.
   const setRowTask = (index: number, task: AiTask) => {
     if (task === "") return onChange(assigned.filter((_, i) => i !== index));
     const next = assigned.map((item, i) => (i === index ? { ...item, task: task as AiAssignment["task"] } : item));
@@ -406,6 +410,27 @@ function AiTaskRows({ config, onChange }: { config: AiProviderConfig; onChange: 
 
   return (
     <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+      {adminRows.map((row) => (
+        <div className="ai-config-row" key={`admin-${row.task}`} style={{ opacity: 0.92 }}>
+          <label className="ai-config-field">
+            <span className="faint">Modelo</span>
+            <select className="field select" value={row.model} disabled>
+              <option value={row.model}>{modelOptionText(row.model)}</option>
+            </select>
+          </label>
+          <label className="ai-config-field">
+            <span className="faint">Tarea</span>
+            <select className="field select" value={row.task} disabled>
+              {AI_TASK_OPTIONS.filter((option) => option.value === row.task).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+        </div>
+      ))}
+      {adminRows.length ? (
+        <div className="notice" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5 }}>
+          <Lock size={13} /> El administrador te asignó {adminRows.length === 1 ? "este modelo para esta tarea" : "estos modelos para estas tareas"}. No puedes cambiarlo.
+        </div>
+      ) : null}
       {assigned.map((row, index) => (
         <div className="ai-config-row" key={`${row.task}-${index}`}>
           <label className="ai-config-field">

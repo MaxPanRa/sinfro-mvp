@@ -20,13 +20,13 @@ from app.core import ai
 from app.core.ai import AIError, AI_PROVIDER_IDS, analyze_cv_with_ai, compare_job_with_ai, translate_job_description
 from app.core.config import settings
 from app.core.cv import analyze_cv_text, extract_cv_text
-from app.core.email import send_plan_assigned_email, send_verification_email, smtp_configured
+from app.core.email import send_new_user_admin_email, send_plan_assigned_email, send_verification_email, smtp_configured
 from app.core.google import GMAIL_SEND_SCOPE, build_google_auth_url, exchange_code, get_google_userinfo
 from app.core.security import create_access_token, decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret, hash_password, hash_token, mask_secret, read_access_token, verify_password
 from app.db.redis import get_redis
 from app.db.session import SessionLocal, get_db
 from app.models import AiTaskAssignment, ApiCredential, CvDocument, FriendFamilyCode, JobEvaluation, JobPosting, JobRun, OAuthAccount, PendingRegistration, Profile, SubscriptionPlan, User, UserSubscription, UserTheme
-from app.schemas import AdminAssignCodeIn, AdminAssignResultOut, AdminCodeOut, AdminCodeUpdateIn, AdminPlanChangeIn, AdminUserOut, AdminUserStatusIn, AiAssignmentItem, AiConfigIn, AiProviderConfigOut, ConfirmEmailIn, CredentialIn, CredentialOut, CredentialTestIn, CoverLetterIn, CoverLetterOut, GmailStatusOut, GoogleAuthStartOut, JobEvaluationOut, JobStatusIn, JobTranslationIn, JobTranslationOut, LoginIn, PlanOut, ProfileIn, RegisterIn, RegisterStartOut, SubscriptionCodeIn, SubscriptionOut, ThemeIn, ThemeOut, TokenOut, UserOut
+from app.schemas import AdminAiAssignIn, AdminAiAssignmentItem, AdminAiUnassignIn, AdminAssignCodeIn, AdminAssignResultOut, AdminCodeOut, AdminCodeUpdateIn, AdminPlanChangeIn, AdminUserOut, AdminUserStatusIn, AiAssignmentItem, AiConfigIn, AiProviderConfigOut, ConfirmEmailIn, CredentialIn, CredentialOut, CredentialTestIn, CoverLetterIn, CoverLetterOut, GmailStatusOut, GoogleAuthStartOut, JobEvaluationOut, JobStatusIn, JobTranslationIn, JobTranslationOut, LoginIn, PlanOut, ProfileIn, RegisterIn, RegisterStartOut, SubscriptionCodeIn, SubscriptionOut, ThemeIn, ThemeOut, TokenOut, UserOut
 from app.seed import GLOBAL_POOL_EMAIL, seed_demo_data, seed_dev_data
 
 app = FastAPI(title=settings.project_name)
@@ -246,11 +246,16 @@ def require_credential_tested(redis: Redis, user_id: int, provider_id: str, valu
 
 
 def provider_for_task(db: Session, user_id: int, task: str) -> tuple[str, str] | None:
-    """(provider, model) asignado a una tarea, si hay credencial usable."""
+    """(provider, model) asignado a una tarea, si hay credencial usable.
+
+    Si la asignación la hizo el admin, la credencial es la del admin
+    (``credential_user_id``), no la del usuario.
+    """
     assignment = db.scalar(select(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id, AiTaskAssignment.task == task))
     if not assignment:
         return None
-    key = load_credential_value(db, user_id, assignment.provider)
+    cred_owner = assignment.credential_user_id or user_id
+    key = load_credential_value(db, cred_owner, assignment.provider)
     if not key:
         return None
     model = assignment.model or ai.default_model(assignment.provider)
@@ -261,7 +266,8 @@ def assign_ai_task(db: Session, user_id: int, provider: str, task: str, model: s
     """Asigna ``provider``+``model`` a ``task``. Cada tarea la hace una sola IA, pero
     un proveedor puede atender varias tareas (con modelos distintos)."""
     # Exclusión por tarea: libera la IA previa de esta tarea (puede ser otro provider).
-    db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id, AiTaskAssignment.task == task))
+    # No tocamos asignaciones puestas por el admin (esas las gestiona solo el admin).
+    db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id, AiTaskAssignment.task == task, AiTaskAssignment.assigned_by_admin.is_(False)))
     db.add(AiTaskAssignment(user_id=user_id, task=task, provider=provider, model=model or None))
 
 
@@ -377,6 +383,11 @@ def confirm_email(payload: ConfirmEmailIn, db: DbDep) -> TokenOut:
     db.delete(pending)
     db.commit()
     db.refresh(user)
+    # Avisa al administrador del nuevo registro (no debe romper el alta si falla).
+    try:
+        send_new_user_admin_email(ADMIN_EMAIL, user.email, user.name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"admin new-user email skipped: {exc}")
     return TokenOut(accessToken=create_access_token(user.id), user=user)
 
 
@@ -592,6 +603,13 @@ def admin_user_payload(db: Session, user: User) -> AdminUserOut:
     profiles = list(db.scalars(select(Profile).where(Profile.user_id == user.id)).all())
     visible = [profile for profile in profiles if not profile.plan_disabled]
     disabled = [profile for profile in profiles if profile.plan_disabled]
+    ai_rows = db.scalars(
+        select(AiTaskAssignment).where(AiTaskAssignment.user_id == user.id, AiTaskAssignment.assigned_by_admin.is_(True))
+    ).all()
+    ai_assignments = [
+        AdminAiAssignmentItem(task=row.task, provider=row.provider, model=row.model or ai.default_model(row.provider))
+        for row in ai_rows
+    ]
     return AdminUserOut(
         id=user.id,
         email=user.email,
@@ -603,6 +621,7 @@ def admin_user_payload(db: Session, user: User) -> AdminUserOut:
         disabledProfiles=len(disabled),
         totalProfiles=len(profiles),
         createdAt=user.created_at,
+        aiAssignments=ai_assignments,
     )
 
 
@@ -610,6 +629,53 @@ def admin_user_payload(db: Session, user: User) -> AdminUserOut:
 def admin_users(db: DbDep, _admin: Annotated[User, Depends(require_admin)]) -> list[AdminUserOut]:
     rows = db.scalars(select(User).where(User.email != GLOBAL_POOL_EMAIL).order_by(User.id)).all()
     return [admin_user_payload(db, row) for row in rows]
+
+
+@app.get("/admin/ai/assignable", response_model=list[AiProviderConfigOut])
+def admin_ai_assignable(db: DbDep, admin: Annotated[User, Depends(require_admin)]) -> list[AiProviderConfigOut]:
+    """IAs que el admin tiene conectadas (su BYOK) y por tanto puede asignar a usuarios."""
+    return [provider for provider in ai_providers_payload(db, admin.id) if provider.connected]
+
+
+@app.post("/admin/ai/assign", response_model=list[AdminUserOut])
+def admin_ai_assign(payload: AdminAiAssignIn, db: DbDep, admin: Annotated[User, Depends(require_admin)]) -> list[AdminUserOut]:
+    """Asigna una IA del admin (provider+model) a uno o más usuarios para ciertas tareas.
+    Los usuarios la usan con la API key del admin y no pueden cambiarla."""
+    if payload.provider not in AI_PROVIDER_IDS:
+        raise HTTPException(status_code=404, detail="Proveedor de IA desconocido")
+    if not load_credential_value(db, admin.id, payload.provider):
+        raise HTTPException(status_code=400, detail="Conecta primero tu API key de este proveedor")
+    tasks = [task for task in payload.tasks if task in AI_TASKS]
+    if not tasks:
+        raise HTTPException(status_code=400, detail="Selecciona al menos una tarea válida")
+    model = payload.model.strip() or ai.default_model(payload.provider)
+    updated: list[User] = []
+    for user_id in dict.fromkeys(payload.userIds):
+        target = db.get(User, user_id)
+        if not target or target.email == GLOBAL_POOL_EMAIL:
+            continue
+        for task in tasks:
+            # Sustituye la asignación (propia o admin) de esa tarea por la del admin.
+            db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id, AiTaskAssignment.task == task))
+            db.add(AiTaskAssignment(user_id=user_id, task=task, provider=payload.provider, model=model, assigned_by_admin=True, credential_user_id=admin.id))
+        updated.append(target)
+    db.commit()
+    return [admin_user_payload(db, target) for target in updated]
+
+
+@app.post("/admin/ai/unassign", response_model=list[AdminUserOut])
+def admin_ai_unassign(payload: AdminAiUnassignIn, db: DbDep, _admin: Annotated[User, Depends(require_admin)]) -> list[AdminUserOut]:
+    """Quita las asignaciones de IA hechas por el admin (todas o solo ciertas tareas)."""
+    tasks = [task for task in payload.tasks if task in AI_TASKS] or list(AI_TASKS)
+    updated: list[User] = []
+    for user_id in dict.fromkeys(payload.userIds):
+        target = db.get(User, user_id)
+        if not target:
+            continue
+        db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id, AiTaskAssignment.task.in_(tasks), AiTaskAssignment.assigned_by_admin.is_(True)))
+        updated.append(target)
+    db.commit()
+    return [admin_user_payload(db, target) for target in updated]
 
 
 @app.patch("/admin/users/{user_id}/plan", response_model=AdminUserOut)
@@ -1289,17 +1355,23 @@ def ai_providers_payload(db: Session, user_id: int) -> list[AiProviderConfigOut]
     saved = {row.provider: row for row in db.scalars(select(ApiCredential).where(ApiCredential.user_id == user_id)).all()}
     rows = db.scalars(select(AiTaskAssignment).where(AiTaskAssignment.user_id == user_id)).all()
     by_provider: dict[str, list[AiAssignmentItem]] = {}
+    admin_providers: set[str] = set()
     for row in rows:
         by_provider.setdefault(row.provider, []).append(
-            AiAssignmentItem(task=row.task, model=row.model or ai.default_model(row.provider))
+            AiAssignmentItem(task=row.task, model=row.model or ai.default_model(row.provider), adminManaged=bool(row.assigned_by_admin))
         )
+        if row.assigned_by_admin:
+            admin_providers.add(row.provider)
     result: list[AiProviderConfigOut] = []
     for provider_id in AI_PROVIDER_IDS:
         cred = saved.get(provider_id)
+        # Conectado si el usuario tiene su propia key O si el admin le asignó este
+        # proveedor (en ese caso usa la API key del admin, sin tener la suya).
+        connected = bool(cred) or provider_id in admin_providers
         result.append(AiProviderConfigOut(
             provider=provider_id,
             name=ai_provider_name(provider_id),
-            connected=bool(cred),
+            connected=connected,
             models=ai.PROVIDER_MODELS.get(provider_id, []),
             defaultModel=(cred.model if cred and cred.model else ai.default_model(provider_id)),
             assignments=by_provider.get(provider_id, []),
@@ -1321,14 +1393,20 @@ def update_ai_config(payload: AiConfigIn, db: DbDep, user: Annotated[User, Depen
     if not cred:
         raise HTTPException(status_code=400, detail="Conecta primero la API key de este proveedor")
 
-    # Reemplaza las asignaciones de ESTE proveedor por las pedidas. Cada tarea es
-    # única (si otra IA la tenía, se la quitamos). Un proveedor puede tener varias.
-    db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user.id, AiTaskAssignment.provider == payload.provider))
+    # Tareas bloqueadas por el admin: el usuario no las puede reasignar ni quitar.
+    admin_locked = {
+        row.task for row in db.scalars(
+            select(AiTaskAssignment).where(AiTaskAssignment.user_id == user.id, AiTaskAssignment.assigned_by_admin.is_(True))
+        ).all()
+    }
+    # Reemplaza las asignaciones (propias) de ESTE proveedor por las pedidas. Cada
+    # tarea es única; un proveedor puede atender varias. No tocamos las del admin.
+    db.execute(delete(AiTaskAssignment).where(AiTaskAssignment.user_id == user.id, AiTaskAssignment.provider == payload.provider, AiTaskAssignment.assigned_by_admin.is_(False)))
     seen_tasks: set[str] = set()
     last_model = ""
     for item in payload.assignments:
         task = item.task.strip()
-        if task not in AI_TASKS or task in seen_tasks:
+        if task not in AI_TASKS or task in seen_tasks or task in admin_locked:
             continue
         seen_tasks.add(task)
         model = item.model.strip() or ai.default_model(payload.provider)

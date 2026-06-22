@@ -62,6 +62,7 @@ export type AiTask = "" | "cv_read" | "cv_vs_job";
 export interface AiAssignment {
   task: "cv_read" | "cv_vs_job";
   model: string;
+  adminManaged?: boolean;
 }
 
 export interface AiProviderConfig {
@@ -93,6 +94,12 @@ export interface JobTranslation {
   engine: string;
 }
 
+export interface AdminAiAssignment {
+  task: "cv_read" | "cv_vs_job";
+  provider: string;
+  model: string;
+}
+
 export interface AdminUser {
   id: number;
   email: string;
@@ -104,6 +111,7 @@ export interface AdminUser {
   disabledProfiles: number;
   totalProfiles: number;
   createdAt?: string | null;
+  aiAssignments: AdminAiAssignment[];
 }
 
 export interface AdminCode {
@@ -361,6 +369,18 @@ export const apiClient = {
 
   async updateAdminUserStatus(userId: number, isActive: boolean): Promise<AdminUser> {
     return request<AdminUser>(`/admin/users/${userId}/status`, { method: "PATCH", body: JSON.stringify({ isActive }) });
+  },
+
+  async getAssignableAi(): Promise<AiProviderConfig[]> {
+    return request<AiProviderConfig[]>("/admin/ai/assignable", undefined, []);
+  },
+
+  async assignAdminAi(payload: { userIds: number[]; provider: string; model: string; tasks: string[] }): Promise<AdminUser[]> {
+    return request<AdminUser[]>("/admin/ai/assign", { method: "POST", body: JSON.stringify(payload) });
+  },
+
+  async unassignAdminAi(payload: { userIds: number[]; tasks: string[] }): Promise<AdminUser[]> {
+    return request<AdminUser[]>("/admin/ai/unassign", { method: "POST", body: JSON.stringify(payload) });
   },
 
   async getAdminCodes(): Promise<AdminCode[]> {

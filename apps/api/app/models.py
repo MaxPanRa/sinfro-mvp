@@ -163,6 +163,11 @@ class AiTaskAssignment(Base):
     task: Mapped[str] = mapped_column(String(40))
     provider: Mapped[str] = mapped_column(String(80))
     model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Asignada por el administrador: el usuario la ve activa pero no puede cambiarla.
+    assigned_by_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Credencial a usar (NULL = la del propio usuario). En asignaciones admin apunta
+    # al admin, para que el usuario consuma la API key BYOK del administrador.
+    credential_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class JobSource(Base):

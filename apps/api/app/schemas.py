@@ -117,6 +117,7 @@ class ProfileIn(BaseModel):
 class AiAssignmentItem(BaseModel):
     task: str   # "cv_read" | "cv_vs_job"
     model: str
+    adminManaged: bool = False  # asignada por el admin → el usuario no la puede cambiar
 
 
 class AiProviderConfigOut(BaseModel):
@@ -177,6 +178,12 @@ class AdminUserStatusIn(BaseModel):
     isActive: bool
 
 
+class AdminAiAssignmentItem(BaseModel):
+    task: str
+    provider: str
+    model: str
+
+
 class AdminUserOut(BaseModel):
     id: int
     email: str
@@ -188,6 +195,19 @@ class AdminUserOut(BaseModel):
     disabledProfiles: int
     totalProfiles: int
     createdAt: datetime | None = None
+    aiAssignments: list[AdminAiAssignmentItem] = Field(default_factory=list)
+
+
+class AdminAiAssignIn(BaseModel):
+    userIds: list[int]
+    provider: str
+    model: str = ""
+    tasks: list[str] = Field(default_factory=list)  # "cv_read" | "cv_vs_job"
+
+
+class AdminAiUnassignIn(BaseModel):
+    userIds: list[int]
+    tasks: list[str] = Field(default_factory=list)
 
 
 class AdminCodeOut(BaseModel):

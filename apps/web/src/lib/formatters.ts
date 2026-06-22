@@ -91,8 +91,8 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
   const jobLoc = (job.location || "").toLowerCase();
   const locationScore = remote || !jobLoc ? 100 : profileLoc && (profileLoc.includes(jobLoc) || jobLoc.includes(profileLoc) || jobLoc.includes("latam")) ? 100 : 55;
 
-  // Ponderación pedida: contenido manda (60%), esquema y ubicación 20% cada uno.
-  const score = Math.round(relevanceScore * 0.6 + modalityScore * 0.2 + locationScore * 0.2);
+  // Ponderación pedida: ubicación con más peso (30%), esquema 20%, contenido 50%.
+  const score = Math.round(relevanceScore * 0.5 + modalityScore * 0.2 + locationScore * 0.3);
 
   const reasons = matched.length
     ? [`${matched.length} de tus ${terms.length} skills/palabras clave aparecen en esta vacante: ${matched.slice(0, 6).join(", ")}.`]
