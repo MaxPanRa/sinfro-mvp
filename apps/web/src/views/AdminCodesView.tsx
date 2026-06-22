@@ -91,7 +91,7 @@ export function AdminCodesView() {
 
         {error ? <div className="notice is-error">{error}</div> : null}
 
-        <div className="settings-group">
+        <div className="settings-group admin-table">
           <div className="sync-row is-head" style={{ gridTemplateColumns: "1.3fr 1fr 0.8fr 0.8fr 0.9fr" }}>
             <span>Código</span><span>Plan</span><span className="right">Canjes</span><span className="right">Estado</span><span className="right">Asignar</span>
           </div>

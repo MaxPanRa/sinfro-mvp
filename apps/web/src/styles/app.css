@@ -1966,6 +1966,39 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
+  /* Admin (Usuarios / Cupones): las filas de 5-6 columnas no caben en móvil.
+     Ocultamos el encabezado y apilamos cada fila como tarjeta. El !important
+     vence al grid-template-columns inline de cada fila. */
+  .admin-table .sync-row.is-head {
+    display: none;
+  }
+
+  .admin-table .sync-row {
+    grid-template-columns: 1fr !important;
+    gap: 9px;
+    padding: 14px 16px;
+  }
+
+  .admin-table .sync-row > .right,
+  .admin-table .sync-row .right {
+    text-align: left;
+    justify-content: flex-start;
+  }
+
+  /* Controles a ancho completo para que se toquen bien. */
+  .admin-table .sync-row .field.select,
+  .admin-table .sync-row .primary-button,
+  .admin-table .sync-row .ghost-button,
+  .admin-table .sync-row .danger-button {
+    width: 100%;
+  }
+
+  .admin-table .sync-row .right > .primary-button,
+  .admin-table .sync-row .right > .ghost-button,
+  .admin-table .sync-row .right > .danger-button {
+    width: 100%;
+  }
+
   .modal-root {
     padding: 0;
   }

@@ -115,6 +115,7 @@ class JobRun(Base):
     duration: Mapped[str] = mapped_column(String(40))
     started: Mapped[str] = mapped_column(String(80))
     error: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -562,6 +563,22 @@ def send_callmebot_message(full_phone: str, api_key: str, text: str) -> None:
         raise RuntimeError("CallMeBot did not accept the WhatsApp summary")
 
 
+def record_global_sync_run(db, user_id: int, found: int) -> None:
+    """Registra (upsert) la última corrida del escaneo PROGRAMADO para un usuario.
+    Una sola fila por usuario (source "Global Sync"), con la hora actualizada cada
+    ciclo, para que la bandeja pueda mostrar 'Global Sync · hace X'."""
+    run = db.scalar(select(JobRun).where(JobRun.user_id == user_id, JobRun.source == "Global Sync"))
+    if not run:
+        run = JobRun(user_id=user_id, profile_id=None, source="Global Sync")
+        db.add(run)
+    run.status = "success"
+    run.found = str(found)
+    run.duration = "—"
+    run.started = "ahora"
+    run.error = None
+    run.created_at = datetime.now(timezone.utc)
+
+
 def run_global_sync_cycle() -> dict[str, int]:
     """Alimenta el pool global, genera matches por perfil y manda Gmail por usuario."""
     started_at = datetime.now(timezone.utc)
@@ -598,6 +615,9 @@ def run_global_sync_cycle() -> dict[str, int]:
             user_inserted = 0
             for profile in profiles:
                 user_inserted += upsert_global_matches_for_profile(db, user.id, profile.id, profile, global_jobs)
+            # Marca que el escaneo programado corrió para este usuario (lo vea o no
+            # con matches nuevos), para el chip "Global Sync · hace X" en la bandeja.
+            record_global_sync_run(db, user.id, user_inserted)
             db.commit()
             if user_inserted > 0:
                 matched_users += 1

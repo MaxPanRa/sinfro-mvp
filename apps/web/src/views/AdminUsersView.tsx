@@ -164,7 +164,7 @@ export function AdminUsersView({ plans, currentUserId }: { plans: SubscriptionPl
           )}
         </div>
 
-        <div className="settings-group">
+        <div className="settings-group admin-table">
           <div className="sync-row is-head" style={{ gridTemplateColumns: grid }}>
             <span></span><span>Usuario</span><span>Plan</span><span>IA asignada</span><span>Estado</span><span className="right">Acciones</span>
           </div>

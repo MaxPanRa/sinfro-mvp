@@ -19,7 +19,7 @@ interface TopBarProps {
   view: ViewId;
   density: Density;
   syncing: boolean;
-  lastSyncAt: string | null;
+  lastSync: { at: string; label: string } | null;
   theme: ThemeId;
   accent: AccentId;
   navOpen: boolean;
@@ -33,7 +33,7 @@ interface TopBarProps {
   onAccent: (accent: AccentId) => void;
 }
 
-export function TopBar({ view, density, syncing, lastSyncAt, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
+export function TopBar({ view, density, syncing, lastSync, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // Re-render periódico para que la etiqueta "hace X min" no se quede congelada.
   const [, setTick] = useState(0);
@@ -52,7 +52,7 @@ export function TopBar({ view, density, syncing, lastSyncAt, theme, accent, navO
     return () => window.clearInterval(id);
   }, []);
 
-  const lastSyncLabel = relativeTimeLabel(lastSyncAt);
+  const lastSyncLabel = lastSync ? relativeTimeLabel(lastSync.at) : null;
 
   return (
     <header className="topbar">
@@ -68,7 +68,7 @@ export function TopBar({ view, density, syncing, lastSyncAt, theme, accent, navO
 
       <div className="status-chip desktop-only">
         <span className={`status-dot ${syncing ? "is-running" : ""}`} />
-        {syncing ? "Sincronizando..." : lastSyncLabel ? `Sync · ${lastSyncLabel}` : "Sin escaneos aún"}
+        {syncing ? "Sincronizando..." : lastSync && lastSyncLabel ? `${lastSync.label} · ${lastSyncLabel}` : "Sin escaneos aún"}
       </div>
       <div ref={themeMenuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button className="icon-button" onClick={onToggleThemeMenu} title="Tema" aria-label="Tema">

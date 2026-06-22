@@ -201,6 +201,16 @@ export function App() {
     connected: credentials.filter((credential) => credential.status === "connected").length,
   }), [activeProfile, credentials, jobs]);
 
+  // Chip de la bandeja: muestra el escaneo más reciente (manual o programado), con
+  // su etiqueta. Se compara por fecha porque el run programado es un upsert (id fijo).
+  const lastSync = useMemo(() => {
+    const successes = syncRuns.filter((run) => run.status === "success" && run.createdAt);
+    if (!successes.length) return null;
+    const latest = successes.reduce((best, run) => (new Date(run.createdAt!).getTime() > new Date(best.createdAt!).getTime() ? run : best));
+    const label = latest.source === "Manual scan" ? "Manual Sync" : latest.source === "Global Sync" ? "Global Sync" : latest.source;
+    return { at: latest.createdAt as string, label };
+  }, [syncRuns]);
+
   const visibleJobs = useMemo(() => {
     let next = [...jobs];
     const query = search.trim().toLowerCase();
@@ -566,7 +576,7 @@ export function App() {
       profilesUsed={profiles.length}
       profilesLimit={profilesLimit}
       hasRunning={syncRuns.some((run) => run.status === "running") || syncing}
-      lastSyncAt={syncRuns.find((run) => run.status === "success")?.createdAt ?? null}
+      lastSync={lastSync}
       onNavigate={setView}
       onCloseNav={() => setNavOpen(false)}
       onToggleNav={() => setNavOpen((open) => !open)}

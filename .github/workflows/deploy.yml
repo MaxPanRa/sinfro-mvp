@@ -62,6 +62,12 @@ jobs:
             DIGEST_ENABLED=${{ secrets.DIGEST_ENABLED || 'false' }}
             DIGEST_INTERVAL_MINUTES=${{ secrets.DIGEST_INTERVAL_MINUTES || '60' }}
 
+            GLOBAL_SYNC_ENABLED=${{ secrets.GLOBAL_SYNC_ENABLED || 'true' }}
+            GLOBAL_SYNC_INTERVAL_MINUTES=${{ secrets.GLOBAL_SYNC_INTERVAL_MINUTES || '30' }}
+            GLOBAL_JOBS_TTL_DAYS=${{ secrets.GLOBAL_JOBS_TTL_DAYS || '30' }}
+            GLOBAL_SYNC_MAX_MATCHES_PER_PROFILE=${{ secrets.GLOBAL_SYNC_MAX_MATCHES_PER_PROFILE || '80' }}
+            VITE_SCAN_INTERVAL_MIN=${{ secrets.VITE_SCAN_INTERVAL_MIN || '30' }}
+
             CADDY_DOMAIN=${{ secrets.CADDY_DOMAIN }}
             EOF
 

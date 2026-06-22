@@ -25,7 +25,7 @@ interface AppShellProps {
   profilesUsed: number;
   profilesLimit: number;
   hasRunning: boolean;
-  lastSyncAt: string | null;
+  lastSync: { at: string; label: string } | null;
   onNavigate: (view: ViewId) => void;
   onCloseNav: () => void;
   onToggleNav: () => void;
@@ -65,7 +65,7 @@ export function AppShell(props: AppShellProps) {
           view={props.view}
           density={props.density}
           syncing={props.syncing}
-          lastSyncAt={props.lastSyncAt}
+          lastSync={props.lastSync}
           theme={props.theme}
           accent={props.accent}
           navOpen={props.navOpen}
