@@ -13,6 +13,15 @@ export function SyncRunsTable({ runs }: { runs: SyncRun[] }) {
           <div className="sync-row is-head">
             <span>Fuente</span><span>Estado</span><span className="right">Vacantes</span><span className="right">Duracion</span><span className="right">Iniciado</span>
           </div>
+          {!runs.length ? (
+            <div className="sync-row">
+              <span className="muted">Sin ejecuciones registradas</span>
+              <span />
+              <span className="right mono faint">0</span>
+              <span className="right mono faint">—</span>
+              <span className="right mono faint">—</span>
+            </div>
+          ) : null}
           {runs.map((run) => {
             const meta = syncStatusMeta(run.status);
             return (

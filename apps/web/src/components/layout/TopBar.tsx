@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Menu, Palette, Zap } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ThemeMenu } from "./ThemeMenu";
@@ -9,33 +10,48 @@ const titles: Record<ViewId, string> = {
   settings: "Conexiones",
   jobs: "Sync Runs",
   subscription: "Suscripcion",
+  admin_users: "Admin Usuarios",
+  admin_codes: "Admin Codigos",
 };
 
 interface TopBarProps {
   view: ViewId;
-  subtitle: string;
   density: Density;
   syncing: boolean;
   theme: ThemeId;
   accent: AccentId;
+  navOpen: boolean;
   themeMenuOpen: boolean;
   onToggleNav: () => void;
   onDensity: (density: Density) => void;
   onRunSync: () => void;
   onToggleThemeMenu: () => void;
+  onCloseThemeMenu: () => void;
   onTheme: (theme: ThemeId) => void;
   onAccent: (accent: AccentId) => void;
 }
 
-export function TopBar({ view, subtitle, density, syncing, theme, accent, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onTheme, onAccent }: TopBarProps) {
+export function TopBar({ view, density, syncing, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
+  const themeMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!themeMenuRef.current?.contains(event.target as Node)) onCloseThemeMenu();
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [onCloseThemeMenu, themeMenuOpen]);
+
   return (
     <header className="topbar">
-      <button className="icon-button" onClick={onToggleNav} aria-label="Abrir navegacion">
-        <Menu size={17} />
-      </button>
+      {!navOpen ? (
+        <button className="icon-button nav-toggle" onClick={onToggleNav} aria-label="Abrir navegacion">
+          <Menu size={17} />
+        </button>
+      ) : null}
       <div className="topbar-title">
         <h1>{titles[view]}</h1>
-        <span className="mono faint" style={{ fontSize: 12 }}>{subtitle}</span>
       </div>
       <div className="spacer" />
 
@@ -43,13 +59,7 @@ export function TopBar({ view, subtitle, density, syncing, theme, accent, themeM
         <span className={`status-dot ${syncing ? "is-running" : ""}`} />
         {syncing ? "Sincronizando..." : "Sync · hace 5 min"}
       </div>
-      <div className="segmented desktop-only">
-        <button className={density === "comoda" ? "is-active" : ""} onClick={() => onDensity("comoda")}>Comoda</button>
-        <button className={density === "compacta" ? "is-active" : ""} onClick={() => onDensity("compacta")}>Compacta</button>
-        <button className={density === "super" ? "is-active" : ""} onClick={() => onDensity("super")}>Super</button>
-      </div>
-
-      <div style={{ position: "relative", flexShrink: 0 }}>
+      <div ref={themeMenuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button className="icon-button" onClick={onToggleThemeMenu} title="Tema" aria-label="Tema">
           <Palette size={16} />
         </button>

@@ -1,7 +1,10 @@
 import type { SyncRun } from "../types/sync";
 import { SyncRunsTable } from "../components/sync/SyncRunsTable";
 
-export function SyncRunsView({ runs, nuevas }: { runs: SyncRun[]; nuevas: number }) {
+export function SyncRunsView({ runs, totalJobs, nuevas }: { runs: SyncRun[]; totalJobs: number; nuevas: number }) {
+  const okRuns = runs.filter((run) => run.status === "success").length;
+  const failedRuns = runs.filter((run) => run.status === "failed").length;
+
   return (
     <div className="view">
       <div className="view-inner">
@@ -11,10 +14,10 @@ export function SyncRunsView({ runs, nuevas }: { runs: SyncRun[]; nuevas: number
         </div>
 
         <div className="sync-stats">
-          <Stat title="Vacantes hoy" value="1018" />
+          <Stat title="Vacantes" value={String(totalJobs)} />
           <Stat title="Nuevas" value={String(nuevas)} accent />
-          <Stat title="Runs OK" value="14" />
-          <Stat title="Fallidos" value="1" danger />
+          <Stat title="Runs OK" value={String(okRuns)} />
+          <Stat title="Fallidos" value={String(failedRuns)} danger />
         </div>
 
         <SyncRunsTable runs={runs} />

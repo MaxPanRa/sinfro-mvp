@@ -32,6 +32,8 @@ services:
       - path: .env
         required: false
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - api_storage:/app/storage
     ports:
       - "8000:8000"
     depends_on:
@@ -57,6 +59,7 @@ services:
       context: ./apps/web
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_SCAN_INTERVAL_MIN: ${VITE_SCAN_INTERVAL_MIN:-60}
     ports:
       - "5173:80"
     depends_on:
@@ -80,6 +83,7 @@ services:
 
 volumes:
   postgres_data:
+  api_storage:
   caddy_data:
   caddy_config:
 

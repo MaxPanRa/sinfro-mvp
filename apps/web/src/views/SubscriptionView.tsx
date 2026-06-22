@@ -17,7 +17,7 @@ export function SubscriptionView({ plans, subscription }: { plans: SubscriptionP
           <div className="avatar"><CreditCard size={16} /></div>
           <div className="spacer">
             <div style={{ fontSize: 13.5, fontWeight: 700 }}>Plan actual: {subscription?.plan.name ?? "Free"}</div>
-            <div className="muted" style={{ fontSize: 12.5 }}>La estructura esta lista para conectar Stripe o MercadoPago despues.</div>
+            <div className="muted" style={{ fontSize: 12.5 }}>Para acceder a planes con beneficios, contacta al equipo de SinFro.</div>
           </div>
           <span className="status-badge" style={{ color: "var(--accent)", background: "var(--accentW2)" }}>{subscription?.status ?? "active"}</span>
         </div>
@@ -38,7 +38,7 @@ export function SubscriptionView({ plans, subscription }: { plans: SubscriptionP
                   </span>
                 ))}
               </div>
-              <Button disabled={plan.code === activeCode}>{plan.code === activeCode ? "Plan activo" : "Elegir plan"}</Button>
+              <Button disabled>{plan.code === activeCode ? "Plan activo" : "Elegir plan"}</Button>
             </article>
           ))}
         </div>

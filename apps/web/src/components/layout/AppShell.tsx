@@ -16,6 +16,13 @@ interface AppShellProps {
   themeMenuOpen: boolean;
   counts: { nuevas: number; connected: number };
   activeProfile: Profile;
+  userName: string;
+  userEmail: string;
+  isAdmin: boolean;
+  hasProfiles: boolean;
+  planName: string;
+  profilesUsed: number;
+  profilesLimit: number;
   hasRunning: boolean;
   onNavigate: (view: ViewId) => void;
   onCloseNav: () => void;
@@ -23,8 +30,11 @@ interface AppShellProps {
   onDensity: (density: Density) => void;
   onRunSync: () => void;
   onToggleThemeMenu: () => void;
+  onCloseThemeMenu: () => void;
   onTheme: (theme: ThemeId) => void;
   onAccent: (accent: AccentId) => void;
+  onLogout: () => void;
+  onHelp: () => void;
 }
 
 export function AppShell(props: AppShellProps) {
@@ -34,24 +44,34 @@ export function AppShell(props: AppShellProps) {
         activeView={props.view}
         counts={props.counts}
         activeProfile={props.activeProfile}
+        userName={props.userName}
+        userEmail={props.userEmail}
+        isAdmin={props.isAdmin}
+        hasProfiles={props.hasProfiles}
+        planName={props.planName}
+        profilesUsed={props.profilesUsed}
+        profilesLimit={props.profilesLimit}
         hasRunning={props.hasRunning}
         isOpen={props.navOpen}
         onClose={props.onCloseNav}
         onNavigate={props.onNavigate}
+        onLogout={props.onLogout}
+        onHelp={props.onHelp}
       />
       <div className="main-shell">
         <TopBar
           view={props.view}
-          subtitle={props.subtitle}
           density={props.density}
           syncing={props.syncing}
           theme={props.theme}
           accent={props.accent}
+          navOpen={props.navOpen}
           themeMenuOpen={props.themeMenuOpen}
           onToggleNav={props.onToggleNav}
           onDensity={props.onDensity}
           onRunSync={props.onRunSync}
           onToggleThemeMenu={props.onToggleThemeMenu}
+          onCloseThemeMenu={props.onCloseThemeMenu}
           onTheme={props.onTheme}
           onAccent={props.onAccent}
         />

@@ -59,6 +59,9 @@ jobs:
             SMTP_FROM_NAME=${{ secrets.SMTP_FROM_NAME || 'SinFro' }}
             SMTP_USE_TLS=${{ secrets.SMTP_USE_TLS || 'true' }}
 
+            DIGEST_ENABLED=${{ secrets.DIGEST_ENABLED || 'false' }}
+            DIGEST_INTERVAL_MINUTES=${{ secrets.DIGEST_INTERVAL_MINUTES || '60' }}
+
             CADDY_DOMAIN=${{ secrets.CADDY_DOMAIN }}
             EOF
 

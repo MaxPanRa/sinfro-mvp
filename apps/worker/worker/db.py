@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
 from cryptography.fernet import Fernet
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, delete, func, select
+from sqlalchemy import Boolean, JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, delete, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from worker.config import settings
@@ -26,6 +26,22 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255))
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Profile(Base):
+    __tablename__ = "profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    email: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(255))
+    keywords: Mapped[list[str]] = mapped_column(JSON)
+    skills: Mapped[list[dict]] = mapped_column(JSON)
+    plan_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class OAuthAccount(Base):
@@ -57,6 +73,8 @@ class JobPosting(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    # Sin ForeignKey: el worker no define el modelo Profile (la FK real vive en la BD).
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     title: Mapped[str] = mapped_column(String(255))
     company: Mapped[str] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(120))
@@ -67,6 +85,7 @@ class JobPosting(Base):
     status: Mapped[str] = mapped_column(String(40))
     detected: Mapped[str] = mapped_column(String(80))
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    whatsapp_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     url: Mapped[str | None] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(Text)
     salary: Mapped[str] = mapped_column(String(120))
@@ -85,6 +104,7 @@ class JobRun(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(40))
     found: Mapped[str] = mapped_column(String(40))
@@ -99,6 +119,7 @@ GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 USER_AGENT = "SinFro MVP job sync (contact: developer@maxpanra.xyz)"
 PRIMARY = "#4338ca"
 PRIMARY_DARK = "#3730a3"
+GLOBAL_POOL_EMAIL = "global-pool@sinfro.local"
 
 DEMO_JOB_TITLES = {
     "Forward Deployed Engineer",
@@ -184,10 +205,13 @@ def process_sync_job(
     run_id: int,
     user_id: int,
     target_user_id: int | None = None,
+    profile_id: int | None = None,
+    keywords: list[str] | None = None,
     job_family: str = "software",
     summary_minutes: int = 60,
 ) -> None:
     started_at = datetime.now(timezone.utc)
+    keywords = keywords or []
     with SessionLocal() as db:
         run = db.scalar(select(JobRun).where(JobRun.id == run_id, JobRun.user_id == user_id))
         if not run:
@@ -195,11 +219,11 @@ def process_sync_job(
         owner_id = target_user_id or user_id
         try:
             credentials = load_api_credentials(db, user_id)
-            fetched_jobs = fetch_all_real_jobs(job_family=job_family, credentials=credentials)
+            fetched_jobs = fetch_all_real_jobs(job_family=job_family, credentials=credentials, keywords=keywords)
             if fetched_jobs:
-                clear_demo_seed_jobs(db, owner_id)
-                clear_non_matching_real_jobs(db, owner_id)
-            inserted = upsert_real_jobs(db, owner_id, fetched_jobs)
+                clear_demo_seed_jobs(db, owner_id, profile_id)
+                clear_non_matching_real_jobs(db, owner_id, profile_id, keywords)
+            inserted = upsert_real_jobs(db, owner_id, fetched_jobs, profile_id)
             run.status = "success"
             run.found = str(inserted)
             run.duration = duration_label(started_at)
@@ -218,21 +242,10 @@ def process_sync_job(
             print(f"real job sync failed: {exc}")
             return
 
-        user = db.get(User, user_id)
-        account = db.scalar(select(OAuthAccount).where(OAuthAccount.user_id == user_id, OAuthAccount.provider == "google"))
-        if not user or not account or GMAIL_SEND_SCOPE not in (account.scopes or []):
-            return
         try:
-            access_token = decrypt_secret(account.encrypted_access_token) if account.encrypted_access_token else ""
-            if account.encrypted_refresh_token and settings.google_client_id and settings.google_client_secret:
-                access_token = refresh_google_access_token(decrypt_secret(account.encrypted_refresh_token))
-                account.encrypted_access_token = encrypt_secret(access_token)
-                db.commit()
-            if access_token:
-                summary = build_scan_summary(db, owner_id, summary_minutes)
-                send_self_summary(access_token, user.email, summary)
+            send_user_scan_notifications(db, user_id, owner_id, summary_minutes, profile_id)
         except Exception as exc:
-            print(f"gmail summary skipped: {exc}")
+            print(f"scan notifications skipped: {exc}")
 
 
 def load_api_credentials(db, user_id: int) -> dict[str, str]:
@@ -248,8 +261,314 @@ def load_api_credentials(db, user_id: int) -> dict[str, str]:
     return credentials
 
 
-def fetch_all_real_jobs(job_family: str = "software", credentials: dict[str, str] | None = None) -> list[dict[str, Any]]:
+def global_pool_user(db) -> User:
+    user = db.scalar(select(User).where(User.email == GLOBAL_POOL_EMAIL))
+    if user:
+        return user
+    user = User(
+        email=GLOBAL_POOL_EMAIL,
+        name="Global Job Pool",
+        email_verified_at=datetime.now(timezone.utc),
+        is_demo=True,
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def profile_terms(profile: Profile) -> list[str]:
+    terms: list[str] = []
+    terms.extend(str(keyword).strip() for keyword in (profile.keywords or []) if str(keyword or "").strip())
+    for skill in profile.skills or []:
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip():
+            terms.append(str(skill["name"]).strip())
+    role = str(profile.role or "").strip()
+    if role:
+        terms.extend(part.strip() for part in re.split(r"[/,|()-]", role) if len(part.strip()) >= 3)
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for term in terms:
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(term)
+    return unique[:30]
+
+
+def job_matches_profile(job: JobPosting, terms: list[str]) -> bool:
+    if not terms:
+        return is_software_job({"title": job.title, "description": job.description or "", "skills": job.skills or []})
+    haystack = f"{job.title} {job.description or ''} {' '.join(job.skills or [])}".lower()
+    return any(term.lower() in haystack for term in terms if term.strip())
+
+
+def score_profile_match(job: JobPosting, terms: list[str]) -> int:
+    haystack = f"{job.title} {job.description or ''} {' '.join(job.skills or [])}".lower()
+    score = int(job.score or 60)
+    matched = 0
+    for term in terms:
+        lowered = term.lower().strip()
+        if lowered and lowered in haystack:
+            matched += 1
+    score += min(18, matched * 3)
+    return max(0, min(99, score))
+
+
+def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile: Profile, global_jobs: list[JobPosting]) -> int:
+    terms = profile_terms(profile)
+    matches = [job for job in global_jobs if job_matches_profile(job, terms)]
+    matches = sorted(matches, key=lambda row: score_profile_match(row, terms), reverse=True)[:settings.global_sync_max_matches_per_profile]
+    inserted = 0
+    for source_job in matches:
+        posting = db.scalar(
+            select(JobPosting).where(
+                JobPosting.user_id == user_id,
+                JobPosting.profile_id == profile_id,
+                JobPosting.title == source_job.title,
+                JobPosting.company == source_job.company,
+                JobPosting.source == source_job.source,
+            )
+        )
+        if not posting:
+            posting = JobPosting(
+                user_id=user_id,
+                profile_id=profile_id,
+                title=source_job.title,
+                company=source_job.company,
+                source=source_job.source,
+                detected_at=datetime.now(timezone.utc),
+            )
+            db.add(posting)
+            inserted += 1
+        posting.modality = source_job.modality
+        posting.location = source_job.location
+        posting.score = score_profile_match(source_job, terms)
+        posting.score_type = "prelim"
+        posting.status = posting.status or "nueva"
+        posting.detected = source_job.detected
+        posting.url = source_job.url
+        posting.description = source_job.description
+        posting.salary = source_job.salary
+        posting.skills = source_job.skills
+    clear_non_matching_real_jobs(db, user_id, profile_id, terms)
+    return inserted
+
+
+def cleanup_global_jobs(db, pool_id: int) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.global_jobs_ttl_days)
+    job_ids = db.scalars(
+        select(JobPosting.id).where(
+            JobPosting.user_id == pool_id,
+            JobPosting.profile_id == None,  # noqa: E711
+            JobPosting.detected_at < cutoff,
+        )
+    ).all()
+    if not job_ids:
+        return 0
+    db.execute(delete(JobEvaluation).where(JobEvaluation.job_id.in_(job_ids)))
+    db.execute(delete(JobPosting).where(JobPosting.id.in_(job_ids)))
+    return len(job_ids)
+
+
+def user_gmail_account(db, user_id: int) -> OAuthAccount | None:
+    account = db.scalar(select(OAuthAccount).where(OAuthAccount.user_id == user_id, OAuthAccount.provider == "google"))
+    if not account or GMAIL_SEND_SCOPE not in (account.scopes or []):
+        return None
+    return account
+
+
+def gmail_access_token_for_account(db, account: OAuthAccount) -> str:
+    if account.encrypted_refresh_token and settings.google_client_id and settings.google_client_secret:
+        token = refresh_google_access_token(decrypt_secret(account.encrypted_refresh_token))
+        account.encrypted_access_token = encrypt_secret(token)
+        db.commit()
+        return token
+    if account.encrypted_access_token:
+        return decrypt_secret(account.encrypted_access_token)
+    return ""
+
+
+def send_user_scan_summary(db, user_id: int, owner_id: int, minutes: int) -> bool:
+    user = db.get(User, user_id)
+    account = user_gmail_account(db, user_id)
+    if not user or not account:
+        return False
+    summary = build_scan_summary(db, owner_id, minutes)
+    if summary["new_total"] <= 0:
+        return False
+    token = gmail_access_token_for_account(db, account)
+    if not token:
+        return False
+    send_self_summary(token, account.email or user.email, summary)
+    return True
+
+
+def send_user_scan_notifications(db, user_id: int, owner_id: int, minutes: int, profile_id: int | None = None) -> dict[str, bool]:
+    # El resumen es del perfil escaneado y se manda al correo de ese perfil.
+    summary = build_scan_summary(db, owner_id, minutes, profile_id)
+    if summary["new_total"] <= 0:
+        return {"email": False, "whatsapp": False}
+    profile = db.get(Profile, profile_id) if profile_id else None
+    profile_email = (profile.email or "").strip() if profile else ""
+    sent_email = False
+    sent_whatsapp = False
+    try:
+        sent_email = send_user_scan_summary_from_summary(db, user_id, summary, profile_email)
+    except Exception as exc:  # noqa: BLE001
+        print(f"gmail summary skipped: {exc}")
+    try:
+        sent_whatsapp = send_user_whatsapp_summary(db, user_id, summary)
+    except Exception as exc:  # noqa: BLE001
+        print(f"whatsapp summary skipped: {exc}")
+    return {"email": sent_email, "whatsapp": sent_whatsapp}
+
+
+def send_user_scan_summary_from_summary(db, user_id: int, summary: dict[str, Any], profile_email: str = "") -> bool:
+    user = db.get(User, user_id)
+    account = user_gmail_account(db, user_id)
+    if not user or not account:
+        return False
+    token = gmail_access_token_for_account(db, account)
+    if not token:
+        return False
+    sender = account.email or user.email
+    # Destinatario: el correo del perfil si existe; si no, la cuenta del usuario.
+    recipient = profile_email or sender
+    send_self_summary(token, recipient, summary, from_email=sender)
+    return True
+
+
+def user_whatsapp_config(db, user_id: int) -> dict[str, str] | None:
+    row = db.scalar(select(ApiCredential).where(ApiCredential.user_id == user_id, ApiCredential.provider == "whatsapp"))
+    if not row:
+        return None
+    try:
+        data = json.loads(decrypt_secret(row.encrypted_value))
+    except Exception as exc:
+        print(f"whatsapp credential skipped: {exc}")
+        return None
+    api_key = str(data.get("api_key") or "").strip()
+    full_phone = "".join(character for character in str(data.get("full_phone") or "") if character.isdigit())
+    if not full_phone:
+        code = "".join(character for character in str(data.get("phone_code") or "") if character.isdigit())
+        number = "".join(character for character in str(data.get("phone_number") or "") if character.isdigit())
+        full_phone = f"{code}{number}"
+    if not api_key or not full_phone:
+        return None
+    return {"phone": full_phone, "api_key": api_key}
+
+
+def send_user_whatsapp_summary(db, user_id: int, summary: dict[str, Any]) -> bool:
+    config = user_whatsapp_config(db, user_id)
+    if not config:
+        return False
+    pending_jobs = [job for job in summary["recent"] if not job.whatsapp_notified_at]
+    if not pending_jobs:
+        return False
+    whatsapp_summary = {
+        **summary,
+        "recent": pending_jobs,
+        "new_total": len(pending_jobs),
+        "compatible_prelim": sum(1 for job in pending_jobs if job.score >= 70 and job.score_type.lower() != "ia"),
+        "compatible_ai": sum(1 for job in pending_jobs if job.score >= 70 and job.score_type.lower() == "ia"),
+    }
+    text = render_whatsapp_summary(whatsapp_summary)
+    send_callmebot_message(config["phone"], config["api_key"], text)
+    notified_at = datetime.now(timezone.utc)
+    for job in pending_jobs:
+        job.whatsapp_notified_at = notified_at
+    db.commit()
+    return True
+
+
+def send_callmebot_message(full_phone: str, api_key: str, text: str) -> None:
+    params = urlencode({"phone": full_phone, "text": text[:3800], "apikey": api_key})
+    request = Request(f"https://api.callmebot.com/whatsapp.php?{params}", headers={"User-Agent": USER_AGENT})
+    with urlopen(request, timeout=20) as response:
+        body = response.read().decode("utf-8", errors="replace").lower()
+    if "queued" not in body:
+        raise RuntimeError("CallMeBot did not accept the WhatsApp summary")
+
+
+def run_global_sync_cycle() -> dict[str, int]:
+    """Alimenta el pool global, genera matches por perfil y manda Gmail por usuario."""
+    started_at = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        pool = global_pool_user(db)
+        credentials = load_api_credentials(db, pool.id)
+        fetched_jobs = fetch_all_real_jobs(job_family="software", credentials=credentials, keywords=[])
+        inserted_global = upsert_real_jobs(db, pool.id, fetched_jobs, profile_id=None) if fetched_jobs else 0
+        deleted_global = cleanup_global_jobs(db, pool.id)
+        db.commit()
+
+        global_jobs = db.scalars(
+            select(JobPosting)
+            .where(JobPosting.user_id == pool.id, JobPosting.profile_id == None)  # noqa: E711
+            .order_by(JobPosting.score.desc())
+        ).all()
+        users = db.scalars(
+            select(User).where(
+                User.email != GLOBAL_POOL_EMAIL,
+                User.is_demo == False,  # noqa: E712
+                User.is_active == True,  # noqa: E712
+                User.email_verified_at.is_not(None),
+            )
+        ).all()
+
+        matched_users = 0
+        inserted_matches = 0
+        sent_emails = 0
+        sent_whatsapps = 0
+        for user in users:
+            profiles = db.scalars(
+                select(Profile).where(Profile.user_id == user.id, Profile.plan_disabled == False).order_by(Profile.id)  # noqa: E712
+            ).all()
+            user_inserted = 0
+            for profile in profiles:
+                user_inserted += upsert_global_matches_for_profile(db, user.id, profile.id, profile, global_jobs)
+            db.commit()
+            if user_inserted > 0:
+                matched_users += 1
+                inserted_matches += user_inserted
+                # Un resumen POR PERFIL, al correo de cada perfil (igual que el manual).
+                for profile in profiles:
+                    try:
+                        sent = send_user_scan_notifications(db, user.id, user.id, settings.global_sync_interval_minutes, profile.id)
+                        if sent["email"]:
+                            sent_emails += 1
+                        if sent["whatsapp"]:
+                            sent_whatsapps += 1
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"scan notifications skipped for {user.email}/{profile.id}: {exc}")
+
+        print(
+            "global sync: "
+            f"global +{inserted_global}, deleted {deleted_global}, "
+            f"user matches +{inserted_matches} for {matched_users} user(s), "
+            f"gmail {sent_emails}, whatsapp {sent_whatsapps}, duration {duration_label(started_at)}"
+        )
+        return {
+            "globalInserted": inserted_global,
+            "globalDeleted": deleted_global,
+            "matchedUsers": matched_users,
+            "userMatchesInserted": inserted_matches,
+            "emailsSent": sent_emails,
+            "whatsappsSent": sent_whatsapps,
+        }
+
+
+def job_matches_keywords(job: dict[str, Any], keywords: list[str]) -> bool:
+    """True si la vacante menciona alguna keyword del perfil (título/desc/skills)."""
+    haystack = f"{job.get('title') or ''} {job.get('description') or ''} {' '.join(job.get('skills') or [])}".lower()
+    return any(keyword.strip().lower() in haystack for keyword in keywords if keyword.strip())
+
+
+def fetch_all_real_jobs(job_family: str = "software", credentials: dict[str, str] | None = None, keywords: list[str] | None = None) -> list[dict[str, Any]]:
     credentials = credentials or {}
+    keywords = keywords or []
     source_calls = [
         ("RemoteOK", lambda: fetch_remoteok_jobs(limit=35)),
         ("Remotive", lambda: fetch_remotive_jobs(limit=35)),
@@ -281,7 +600,12 @@ def fetch_all_real_jobs(job_family: str = "software", credentials: dict[str, str
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
     for job in jobs:
-        if job_family == "software" and not is_software_job(job):
+        # Relevancia: si el perfil tiene keywords, filtramos por ellas (búsqueda
+        # propia por perfil); si no, caemos al filtro de software por compatibilidad.
+        if keywords:
+            if not job_matches_keywords(job, keywords):
+                continue
+        elif job_family == "software" and not is_software_job(job):
             continue
         key = (normalize_key(job["title"]), normalize_key(job["company"]), job["source"])
         if key in seen:
@@ -509,7 +833,10 @@ def fetch_jooble_jobs(api_key: str, limit: int = 35) -> list[dict[str, Any]]:
         {
             "keywords": "software engineer developer react python data analyst",
             "location": "Mexico",
-            "page": 1,
+            "radius": "80",
+            "page": "1",
+            "ResultOnPage": str(limit),
+            "companysearch": "false",
         },
     )
     return compact_jobs([
@@ -519,8 +846,8 @@ def fetch_jooble_jobs(api_key: str, limit: int = 35) -> list[dict[str, Any]]:
             source="Jooble",
             url=item.get("link"),
             location=item.get("location") or "Mexico",
-            modality="Remoto" if "remote" in f"{item.get('title')} {item.get('snippet')}".lower() else "",
-            description=item.get("snippet"),
+            modality="Remoto" if "remot" in f"{item.get('title')} {item.get('snippet')} {item.get('description')}".lower() else "",
+            description=item.get("snippet") or item.get("description"),
             salary=item.get("salary") or "",
             detected=item.get("updated") or item.get("date"),
         )
@@ -550,7 +877,7 @@ def fetch_adzuna_jobs(app_id: str, app_key: str, limit: int = 35) -> list[dict[s
             source="Adzuna",
             url=item.get("redirect_url"),
             location=", ".join(areas) if isinstance(areas, list) else "",
-            modality="",
+            modality="Remoto" if "remot" in f"{item.get('title')} {item.get('description')}".lower() else "",
             description=item.get("description"),
             salary=salary_label(item.get("salary_min"), item.get("salary_max"), item.get("salary_currency") or "MXN"),
             detected=item.get("created"),
@@ -563,55 +890,137 @@ def fetch_serpapi_jobs(api_key: str, limit: int = 25) -> list[dict[str, Any]]:
         "https://serpapi.com/search.json",
         {
             "engine": "google_jobs",
-            "q": "software developer OR react OR python jobs Mexico remote",
+            "q": "software developer OR react OR python",
+            "location": "Mexico",
+            "google_domain": "google.com.mx",
             "hl": "es",
+            "gl": "mx",
             "api_key": api_key,
         },
     )
+    if isinstance(payload, dict) and payload.get("error"):
+        error = str(payload["error"])
+        if "returned any results" in error.lower():
+            return []
+        raise RuntimeError(f"SerpAPI: {error}")
     jobs = []
     for item in payload.get("jobs_results", []):
+        if not isinstance(item, dict):
+            continue
+        apply_options = item.get("apply_options")
+        apply_link = ""
+        if isinstance(apply_options, list) and apply_options and isinstance(apply_options[0], dict):
+            apply_link = str(apply_options[0].get("link") or "")
+        detected_extensions = item.get("detected_extensions") if isinstance(item.get("detected_extensions"), dict) else {}
+        work_from_home = bool(detected_extensions.get("work_from_home")) if isinstance(detected_extensions, dict) else False
         jobs.append(make_job(
             title=item.get("title"),
             company=item.get("company_name"),
             source="SerpAPI",
-            url=(item.get("apply_options") or [{}])[0].get("link") if isinstance(item.get("apply_options"), list) else item.get("share_link"),
+            url=apply_link or item.get("share_link"),
             location=item.get("location"),
-            modality="Remoto" if "remote" in f"{item.get('title')} {item.get('description')}".lower() else "",
+            modality="Remoto" if work_from_home or "remot" in f"{item.get('title')} {item.get('description')}".lower() else "",
             description=item.get("description"),
-            detected=item.get("detected_extensions", {}).get("posted_at") if isinstance(item.get("detected_extensions"), dict) else None,
+            detected=detected_extensions.get("posted_at") if isinstance(detected_extensions, dict) else None,
         ))
     return compact_jobs(jobs, limit)
 
 
-def fetch_apify_jobs(token: str, limit: int = 25) -> list[dict[str, Any]]:
-    actor = "misceres/indeed-scraper"
-    url = f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}/run-sync-get-dataset-items?token={token}"
-    payload = http_post_json(
-        url,
-        {
+APIFY_DEFAULT_ACTORS = {"indeed": "misceres/indeed-scraper"}
+APIFY_TITLE_KEYS = ("positionName", "title", "jobTitle", "position", "name")
+APIFY_COMPANY_KEYS = ("company", "companyName", "employer", "hiringOrganization", "advertiser")
+APIFY_URL_KEYS = ("url", "jobUrl", "link", "externalApplyLink", "applyUrl", "detailsUrl", "adUrl")
+APIFY_LOCATION_KEYS = ("location", "jobLocation", "city", "place", "region")
+APIFY_DESC_KEYS = ("descriptionText", "description", "jobDescription", "snippet", "descriptionHtml")
+APIFY_SALARY_KEYS = ("salary", "salaryText", "salaryRange", "compensation", "salarySnippet")
+APIFY_DATE_KEYS = ("postedAt", "postedDate", "date", "createdAt", "publishedAt")
+
+
+def first_apify_value(item: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, dict):
+            value = value.get("text") or value.get("name") or value.get("value")
+        if isinstance(value, list):
+            value = ", ".join(str(part) for part in value if part)
+        if value:
+            return str(value)
+    return ""
+
+
+def parse_apify_config(raw: str, limit: int) -> dict[str, Any]:
+    value = raw.strip()
+    if not value:
+        return {"token": "", "actors": APIFY_DEFAULT_ACTORS, "maxItems": limit}
+    if not value.startswith("{"):
+        return {"token": value, "actors": APIFY_DEFAULT_ACTORS, "maxItems": limit}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {"token": value, "actors": APIFY_DEFAULT_ACTORS, "maxItems": limit}
+    token = str(data.get("token") or data.get("apiToken") or "").strip()
+    actors = data.get("actors") if isinstance(data.get("actors"), dict) else {}
+    clean_actors = {str(name): str(actor) for name, actor in actors.items() if str(actor).strip()}
+    return {
+        "token": token,
+        "actors": clean_actors or APIFY_DEFAULT_ACTORS,
+        "maxItems": int(data.get("maxItems") or data.get("max_items") or limit),
+    }
+
+
+def apify_run_input(board: str, max_items: int) -> dict[str, Any]:
+    board_key = board.lower()
+    if board_key == "indeed":
+        return {
             "position": "software developer",
             "country": "MX",
             "location": "Mexico",
-            "maxItems": limit,
+            "maxItems": max_items,
             "parseCompanyDetails": False,
             "saveOnlyUniqueItems": True,
-        },
-    )
-    rows = payload if isinstance(payload, list) else []
-    return compact_jobs([
-        make_job(
-            title=item.get("positionName") or item.get("title"),
-            company=item.get("company") or item.get("companyName"),
-            source="Apify",
-            url=item.get("url") or item.get("jobUrl"),
-            location=item.get("location"),
-            modality="Remoto" if "remote" in f"{item.get('title')} {item.get('description')}".lower() else "",
-            description=item.get("description"),
-            salary=item.get("salary") or "",
-            detected=item.get("postedAt") or item.get("date"),
+        }
+    return {
+        "query": "software developer react python",
+        "search": "software developer react python",
+        "location": "Mexico",
+        "country": "MX",
+        "maxItems": max_items,
+    }
+
+
+def fetch_apify_jobs(raw_config: str, limit: int = 25) -> list[dict[str, Any]]:
+    config = parse_apify_config(raw_config, limit)
+    token = str(config.get("token") or "")
+    if not token:
+        return []
+    actors = config.get("actors") if isinstance(config.get("actors"), dict) else APIFY_DEFAULT_ACTORS
+    max_items = min(int(config.get("maxItems") or limit), limit)
+    jobs: list[dict[str, Any]] = []
+    for board, actor in actors.items():
+        actor_id = str(actor).replace("/", "~")
+        url = (
+            f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?"
+            f"{urlencode({'token': token, 'maxItems': max_items, 'timeout': 110})}"
         )
-        for item in rows if isinstance(item, dict)
-    ], limit)
+        payload = http_post_json(url, apify_run_input(str(board), max_items))
+        rows = payload if isinstance(payload, list) else []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            title = first_apify_value(item, APIFY_TITLE_KEYS)
+            description = first_apify_value(item, APIFY_DESC_KEYS)
+            jobs.append(make_job(
+                title=title,
+                company=first_apify_value(item, APIFY_COMPANY_KEYS),
+                source="Apify",
+                url=first_apify_value(item, APIFY_URL_KEYS),
+                location=first_apify_value(item, APIFY_LOCATION_KEYS) or "Mexico",
+                modality="Remoto" if "remot" in f"{title} {description} {first_apify_value(item, APIFY_LOCATION_KEYS)}".lower() else "",
+                description=description,
+                salary=first_apify_value(item, APIFY_SALARY_KEYS),
+                detected=first_apify_value(item, APIFY_DATE_KEYS),
+            ))
+    return compact_jobs(jobs, limit)
 
 
 def http_json(url: str, params: dict[str, Any] | None = None) -> Any:
@@ -649,7 +1058,9 @@ def make_job(
 ) -> dict[str, Any]:
     clean_title = str(title or "").strip()
     clean_company = str(company or "").strip() or source
-    if not clean_title:
+    clean_url = str(url or "").strip()
+    # No traemos vacantes sin enlace original: sin URL no hay a dónde mandar al usuario.
+    if not clean_title or not clean_url:
         return {}
     tag_list = normalize_tags(tags)
     desc = clean_html(description)
@@ -698,12 +1109,13 @@ def credential_is_usable(value: str) -> bool:
     return not any(token in lowered for token in placeholders)
 
 
-def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]]) -> int:
+def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: int | None = None) -> int:
     changed = 0
     for item in jobs:
         posting = db.scalar(
             select(JobPosting).where(
                 JobPosting.user_id == owner_id,
+                JobPosting.profile_id == profile_id,
                 JobPosting.title == item["title"],
                 JobPosting.company == item["company"],
                 JobPosting.source == item["source"],
@@ -712,6 +1124,7 @@ def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]]) -> int:
         if not posting:
             posting = JobPosting(
                 user_id=owner_id,
+                profile_id=profile_id,
                 title=item["title"],
                 company=item["company"],
                 source=item["source"],
@@ -732,27 +1145,43 @@ def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]]) -> int:
     return changed
 
 
-def clear_demo_seed_jobs(db, owner_id: int) -> None:
-    job_ids = db.scalars(select(JobPosting.id).where(JobPosting.user_id == owner_id, JobPosting.title.in_(DEMO_JOB_TITLES))).all()
+def clear_demo_seed_jobs(db, owner_id: int, profile_id: int | None = None) -> None:
+    query = select(JobPosting.id).where(JobPosting.user_id == owner_id, JobPosting.title.in_(DEMO_JOB_TITLES))
+    if profile_id is not None:
+        query = query.where(JobPosting.profile_id == profile_id)
+    job_ids = db.scalars(query).all()
     if not job_ids:
         return
     db.execute(delete(JobEvaluation).where(JobEvaluation.job_id.in_(job_ids)))
     db.execute(delete(JobPosting).where(JobPosting.id.in_(job_ids)))
 
 
-def clear_non_matching_real_jobs(db, owner_id: int) -> None:
-    rows = db.scalars(select(JobPosting).where(JobPosting.user_id == owner_id, JobPosting.source.in_(REAL_SOURCE_NAMES))).all()
-    job_ids = [row.id for row in rows if not is_software_job({"title": row.title, "description": row.description or "", "skills": row.skills or []})]
+def clear_non_matching_real_jobs(db, owner_id: int, profile_id: int | None = None, keywords: list[str] | None = None) -> None:
+    keywords = keywords or []
+    query = select(JobPosting).where(JobPosting.user_id == owner_id, JobPosting.source.in_(REAL_SOURCE_NAMES))
+    if profile_id is not None:
+        query = query.where(JobPosting.profile_id == profile_id)
+    rows = db.scalars(query).all()
+    job_ids: list[int] = []
+    for row in rows:
+        job = {"title": row.title, "description": row.description or "", "skills": row.skills or []}
+        keep = job_matches_keywords(job, keywords) if keywords else is_software_job(job)
+        if not keep:
+            job_ids.append(row.id)
     if not job_ids:
         return
     db.execute(delete(JobEvaluation).where(JobEvaluation.job_id.in_(job_ids)))
     db.execute(delete(JobPosting).where(JobPosting.id.in_(job_ids)))
 
 
-def build_scan_summary(db, owner_id: int, minutes: int) -> dict[str, Any]:
+def build_scan_summary(db, owner_id: int | list[int], minutes: int, profile_id: int | None = None) -> dict[str, Any]:
+    owner_ids = [owner_id] if isinstance(owner_id, int) else list(owner_id)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(minutes=minutes)
-    all_jobs = db.scalars(select(JobPosting).where(JobPosting.user_id == owner_id).order_by(JobPosting.score.desc())).all()
+    query = select(JobPosting).where(JobPosting.user_id.in_(owner_ids))
+    if profile_id is not None:
+        query = query.where(JobPosting.profile_id == profile_id)
+    all_jobs = db.scalars(query.order_by(JobPosting.score.desc())).all()
     recent_jobs = [job for job in all_jobs if ensure_aware(job.detected_at) >= cutoff]
     compatible_prelim = sum(1 for job in recent_jobs if job.score >= 70 and job.score_type.lower() != "ia")
     compatible_ai = sum(1 for job in recent_jobs if job.score >= 70 and job.score_type.lower() == "ia")
@@ -772,11 +1201,12 @@ def build_scan_summary(db, owner_id: int, minutes: int) -> dict[str, Any]:
     }
 
 
-def send_self_summary(access_token: str, to_email: str, summary: dict[str, Any]) -> None:
+def send_self_summary(access_token: str, to_email: str, summary: dict[str, Any], from_email: str | None = None) -> None:
     subject = f"SinFro: {summary['new_total']} nuevas / {summary['total']} total"
     message = EmailMessage()
     message["To"] = to_email
-    message["From"] = to_email
+    # From debe ser la cuenta Gmail autenticada; To puede ser el correo del perfil.
+    message["From"] = from_email or to_email
     message["Subject"] = subject
     text_body, html_body = render_summary_email(summary)
     message.set_content(text_body)
@@ -864,6 +1294,43 @@ def render_summary_email(summary: dict[str, Any]) -> tuple[str, str]:
 def summary_line(job: JobPosting) -> str:
     url = job.url or "sin liga"
     return f"{job.title} ({job.company}) - {job.score}% - {job.source} - {url}"
+
+
+def render_whatsapp_summary(summary: dict[str, Any]) -> str:
+    recent: list[JobPosting] = summary["recent"]
+    compatible = summary["compatible_prelim"] + summary["compatible_ai"]
+    lines = [
+        f"SinFro - {summary['new_total']} vacantes nuevas",
+        f"Compatibles: {compatible} | Total: {summary['total']}",
+        "",
+        "Top 3 roles:",
+    ]
+    if not recent:
+        lines.append("Sin vacantes nuevas en este periodo.")
+        return "\n".join(lines)
+
+    for index, job in enumerate(recent[:3], start=1):
+        lines.extend([
+            f"{index}. {short_text(job.title, 82)}",
+            f"{job.score}% - {short_text(job.company or job.source, 70)}",
+            job.url or "sin liga",
+            "",
+        ])
+
+    other_jobs = recent[3:13]
+    if other_jobs:
+        lines.append("Otras vacantes:")
+        for job in other_jobs:
+            lines.append(f"- {short_text(job.title, 72)} ({job.score}%) {job.url or 'sin liga'}")
+
+    return "\n".join(lines).strip()
+
+
+def short_text(value: str | None, max_length: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length - 3].rstrip()}..."
 
 
 def stats_grid(cards: list[tuple[str, Any, bool]]) -> str:

@@ -3,7 +3,7 @@ import type { DetailTab } from "../../types/job";
 const labels: Record<DetailTab, string> = {
   analisis: "Analisis",
   vacante: "Vacante original",
-  historial: "Historial",
+  carta: "Carta de presentación",
 };
 
 export function Tabs({ active, onChange }: { active: DetailTab; onChange: (tab: DetailTab) => void }) {

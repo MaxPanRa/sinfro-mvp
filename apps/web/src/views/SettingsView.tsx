@@ -1,9 +1,12 @@
 import { Lock } from "lucide-react";
 import type { CredentialPayload, CredentialProvider } from "../types/credential";
+import type { AiAssignment, AiProviderConfig } from "../lib/apiClient";
 import { CredentialGroup } from "../components/settings/CredentialGroup";
 
 interface SettingsViewProps {
   credentials: CredentialProvider[];
+  aiProviders: AiProviderConfig[];
+  onAiConfig: (provider: string, assignments: AiAssignment[]) => Promise<void>;
   onSaveCredential: (payload: CredentialPayload) => Promise<void>;
   onTestCredential: (id: string, payload?: Partial<CredentialPayload>) => Promise<{ maskedKey?: string } | void>;
   onConnectGoogle: () => Promise<void>;
@@ -11,7 +14,7 @@ interface SettingsViewProps {
 
 const groupOrder = ["Correo", "Modelos de IA", "Busqueda & scraping", "Bolsas de empleo"];
 
-export function SettingsView({ credentials, onSaveCredential, onTestCredential, onConnectGoogle }: SettingsViewProps) {
+export function SettingsView({ credentials, aiProviders, onAiConfig, onSaveCredential, onTestCredential, onConnectGoogle }: SettingsViewProps) {
   return (
     <div className="view">
       <div className="view-inner is-narrow">
@@ -27,6 +30,8 @@ export function SettingsView({ credentials, onSaveCredential, onTestCredential, 
             key={group}
             title={group}
             providers={credentials.filter((provider) => provider.group === group)}
+            aiProviders={group === "Modelos de IA" ? aiProviders : undefined}
+            onAiConfig={onAiConfig}
             onSave={onSaveCredential}
             onTest={onTestCredential}
             onConnectGoogle={onConnectGoogle}

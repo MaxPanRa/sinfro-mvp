@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     public_web_url: str = "http://localhost:5173"
     public_api_url: str = "http://localhost:8000"
+    cv_storage_dir: str = "storage/private/cvs"
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8000/auth/google/callback"

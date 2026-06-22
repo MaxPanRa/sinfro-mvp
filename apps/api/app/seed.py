@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.security import encrypt_secret, mask_secret
 from app.models import (
     ApiCredential,
+    FriendFamilyCode,
     JobEvaluation,
     JobPosting,
     JobRun,
@@ -23,6 +24,31 @@ from app.models import (
 
 DEMO_EMAIL = "demo@sinfro.local"
 GLOBAL_POOL_EMAIL = "global-pool@sinfro.local"
+
+# Títulos de las vacantes demo (para borrarlas: ya no sembramos data falsa).
+DEMO_JOB_TITLES = {
+    "Forward Deployed Engineer",
+    "Node.js Full Stack Developer",
+    "Front-end Developer React / Next.js",
+    "Principal Fullstack Engineer",
+    "Full Stack Laravel + React Developer",
+    "Senior Software Engineer",
+    "Junior Manual QA Engineer API Testing",
+    "Software Engineer Backend Node.js / TS",
+    "Frontend Platform Engineer",
+    "AI Product Engineer",
+    "Automation Engineer Job Search",
+    "Senior Frontend Architect",
+}
+
+
+def clear_demo_jobs(db: Session) -> None:
+    """Borra las vacantes demo (y sus evaluaciones). El radar usa solo fuentes reales."""
+    job_ids = list(db.scalars(select(JobPosting.id).where(JobPosting.title.in_(DEMO_JOB_TITLES))).all())
+    if not job_ids:
+        return
+    db.execute(delete(JobEvaluation).where(JobEvaluation.job_id.in_(job_ids)))
+    db.execute(delete(JobPosting).where(JobPosting.id.in_(job_ids)))
 
 
 @dataclass(frozen=True)
@@ -48,22 +74,23 @@ def seed_demo_data(db: Session) -> DemoSeedResult:
     global_user = upsert_global_pool_user(db)
     upsert_theme(db, user)
     plans = upsert_plans(db)
-    set_all_users_to_free(db, plans["free"])
+    upsert_friend_family_code(db, plans["friends_family"])
+    ensure_users_have_subscription(db, plans["free"])
     upsert_subscription(db, user, plans["free"])
     profiles = upsert_profiles(db, user)
     credentials = upsert_credentials(db, user)
-    sources = upsert_sources(db)
-    jobs = upsert_jobs(db, global_user, sources)
-    evaluations = upsert_evaluations(db, jobs, profiles)
+    upsert_sources(db)
+    # Ya no sembramos vacantes/evaluaciones demo: el radar usa solo fuentes reales.
+    clear_demo_jobs(db)
     runs = upsert_runs(db, user)
     db.commit()
     return DemoSeedResult(
         user_email=user.email,
         profiles=len(profiles),
-        jobs=len(jobs),
+        jobs=0,
         credentials=len(credentials),
         runs=len(runs),
-        evaluations=len(evaluations),
+        evaluations=0,
     )
 
 
@@ -167,10 +194,24 @@ def upsert_subscription(db: Session, user: User, plan: SubscriptionPlan) -> User
     return subscription
 
 
-def set_all_users_to_free(db: Session, free_plan: SubscriptionPlan) -> None:
+def upsert_friend_family_code(db: Session, plan: SubscriptionPlan) -> FriendFamilyCode:
+    code = db.scalar(select(FriendFamilyCode).where(FriendFamilyCode.code == "Tr4b4j0!!!"))
+    if not code:
+        code = FriendFamilyCode(code="Tr4b4j0!!!", plan_id=plan.id)
+        db.add(code)
+    code.plan_id = plan.id
+    code.active = True
+    code.max_redemptions = 3
+    code.redeemed_user_ids = code.redeemed_user_ids or []
+    return code
+
+
+def ensure_users_have_subscription(db: Session, free_plan: SubscriptionPlan) -> None:
     users = db.scalars(select(User).where(User.email != GLOBAL_POOL_EMAIL)).all()
     for user in users:
-        upsert_subscription(db, user, free_plan)
+        subscription = db.scalar(select(UserSubscription).where(UserSubscription.user_id == user.id))
+        if not subscription:
+            upsert_subscription(db, user, free_plan)
 
 
 def upsert_profiles(db: Session, user: User) -> list[Profile]:
@@ -278,7 +319,11 @@ def upsert_sources(db: Session) -> dict[str, JobSource]:
     return sources
 
 
-def upsert_jobs(db: Session, user: User, sources: dict[str, JobSource]) -> list[JobPosting]:
+def upsert_jobs(db: Session, user: User, profiles: list[Profile], sources: dict[str, JobSource]) -> list[JobPosting]:
+    # Cada perfil tiene su propia bandeja: repartimos las vacantes demo entre los
+    # perfiles (frontend a Max, backend al perfil de API) para que se vea distinto.
+    active = next((profile for profile in profiles if profile.active), profiles[0])
+    other = next((profile for profile in profiles if profile.id != active.id), active)
     data: list[dict[str, Any]] = [
         job("Forward Deployed Engineer", "Platzi", "Indeed MX (Apify)", "Remoto", "CDMX", 92, "IA", "nueva", "hace 12 min", "", ["React", "TypeScript", "IA Generativa", "REST APIs"]),
         job("Node.js Full Stack Developer", "Xideral", "Indeed MX (Apify)", "Remoto", "CDMX", 88, "IA", "vista", "hace 38 min", "", ["Angular", "GraphQL", "NestJS", "Node.js", "PostgreSQL"]),
@@ -293,19 +338,26 @@ def upsert_jobs(db: Session, user: User, sources: dict[str, JobSource]) -> list[
         job("Automation Engineer Job Search", "OpenCode Go", "OpenCode Go", "Remoto", "Global", 89, "IA", "nueva", "hace 7 h", "$6-8k USD", ["Python", "OpenCode", "Scraping", "Redis"]),
         job("Senior Frontend Architect", "Nubank", "LinkedIn (SerpAPI)", "Remoto", "LATAM", 93, "IA", "nueva", "hace 9 h", "", ["React", "Architecture", "TypeScript", "Design Systems"]),
     ]
+    # Reparte: las que mencionan backend/python/api/node van al perfil de API;
+    # el resto al perfil activo (frontend). Así cada bandeja se ve diferente.
+    backend_terms = ("backend", "node", "api", "python", "qa")
     rows: list[JobPosting] = []
     for item in data:
+        haystack = f"{item['title']} {' '.join(item['skills'])}".lower()
+        target = other if any(term in haystack for term in backend_terms) else active
         posting = db.scalar(
             select(JobPosting).where(
                 JobPosting.user_id == user.id,
+                JobPosting.profile_id == target.id,
                 JobPosting.title == item["title"],
                 JobPosting.company == item["company"],
                 JobPosting.source == item["source"],
             )
         )
         if not posting:
-            posting = JobPosting(user_id=user.id, title=item["title"], company=item["company"], source=item["source"])
+            posting = JobPosting(user_id=user.id, profile_id=target.id, title=item["title"], company=item["company"], source=item["source"])
             db.add(posting)
+        posting.profile_id = target.id
         posting.source_id = sources[item["source"]].id
         posting.modality = item["modality"]
         posting.location = item["location"]
@@ -315,23 +367,25 @@ def upsert_jobs(db: Session, user: User, sources: dict[str, JobSource]) -> list[
         posting.detected = item["detected"]
         posting.salary = item["salary"]
         posting.skills = item["skills"]
+        posting.url = item["url"]
+        posting.description = item["description"]
         rows.append(posting)
     db.flush()
     return rows
 
 
 def upsert_evaluations(db: Session, jobs: list[JobPosting], profiles: list[Profile]) -> list[JobEvaluation]:
-    active_profile = next((profile for profile in profiles if profile.active), profiles[0])
     rows: list[JobEvaluation] = []
     for posting in jobs:
+        eval_profile_id = posting.profile_id or (next((p for p in profiles if p.active), profiles[0]).id)
         evaluation = db.scalar(
             select(JobEvaluation).where(
                 JobEvaluation.job_id == posting.id,
-                JobEvaluation.profile_id == active_profile.id,
+                JobEvaluation.profile_id == eval_profile_id,
             )
         )
         if not evaluation:
-            evaluation = JobEvaluation(job_id=posting.id, profile_id=active_profile.id, score=posting.score, reasons=[], gaps=[])
+            evaluation = JobEvaluation(job_id=posting.id, profile_id=eval_profile_id, score=posting.score, reasons=[], gaps=[])
             db.add(evaluation)
         top_skills = ", ".join(posting.skills[:3])
         evaluation.score = posting.score
@@ -388,6 +442,15 @@ def job(
     salary: str,
     skills: list[str],
 ) -> dict[str, Any]:
+    from urllib.parse import quote_plus
+    # URL real (búsqueda) y una descripción breve para que la data demo cumpla la
+    # regla "sin URL no se trae" y el análisis tenga de dónde partir.
+    url = f"https://www.google.com/search?q={quote_plus(title + ' ' + company)}"
+    description = (
+        f"{company} busca {title} ({modality}, {location}). "
+        f"Tecnologías y temas: {', '.join(skills)}. "
+        "Vacante de ejemplo (demo) para probar el flujo de evaluación."
+    )
     return {
         "title": title,
         "company": company,
@@ -400,4 +463,6 @@ def job(
         "detected": detected,
         "salary": salary,
         "skills": skills,
+        "url": url,
+        "description": description,
     }

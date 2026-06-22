@@ -5,6 +5,7 @@ export interface SubscriptionPlan {
   priceLabel: string;
   description: string;
   features: string[];
+  limits?: Record<string, unknown>;
 }
 
 export interface UserSubscription {

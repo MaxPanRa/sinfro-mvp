@@ -2,11 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { mockCredentials } from "../data/mockCredentials";
 import { mockJobs } from "../data/mockJobs";
 import { mockProfiles } from "../data/mockProfiles";
-import { mockSyncRuns } from "../data/mockSyncRuns";
-import { apiClient, type UserSession } from "../lib/apiClient";
-import { initialsOf } from "../lib/formatters";
+import { apiClient, type UserSession, type AiProviderConfig, type AiAssignment } from "../lib/apiClient";
+import { initialsOf, buildSemanticAnalysis, displayJobScore } from "../lib/formatters";
 import type { CredentialPayload, CredentialProvider, CredentialTestPayload } from "../types/credential";
-import type { DetailTab, Job, JobFilter, JobSort } from "../types/job";
+import type { AnalysisMode, DetailTab, Job, JobFilter, JobSort } from "../types/job";
 import type { Profile, ProfileDraft } from "../types/profile";
 import type { SubscriptionPlan, UserSubscription } from "../types/subscription";
 import type { SyncRun } from "../types/sync";
@@ -19,10 +18,15 @@ import { SubscriptionView } from "../views/SubscriptionView";
 import { SyncRunsView } from "../views/SyncRunsView";
 import { AuthView } from "../views/AuthView";
 import { OnboardingView } from "../views/OnboardingView";
+import { OnboardingTutorial } from "../components/onboarding/OnboardingTutorial";
+import { AdminUsersView } from "../views/AdminUsersView";
+import { AdminCodesView } from "../views/AdminCodesView";
 import "../styles/app.css";
 
 const storedTheme = () => (localStorage.getItem("sinfron.theme") as ThemeId | null) ?? "esmeralda";
 const storedAccent = () => (localStorage.getItem("sinfron.accent") as AccentId | null) ?? "#10A37F";
+// Marca (por usuario) de que ya vio el tutorial de bienvenida.
+const tutorialSeenKey = (userId: number) => `sinfron.tutorialSeen.${userId}`;
 
 const emptyProfile: Profile = {
   id: 0,
@@ -54,12 +58,13 @@ export function App() {
   const [jobs, setJobs] = useState<Job[]>(mockJobs);
   const [profiles, setProfiles] = useState<Profile[]>(mockProfiles);
   const [credentials, setCredentials] = useState<CredentialProvider[]>(mockCredentials);
-  const [syncRuns, setSyncRuns] = useState<SyncRun[]>(mockSyncRuns);
+  const [aiProviders, setAiProviders] = useState<AiProviderConfig[]>([]);
+  const [syncRuns, setSyncRuns] = useState<SyncRun[]>([]);
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<JobFilter>("todas");
-  const [sort, setSort] = useState<JobSort>("score");
+  const [sort, setSort] = useState<JobSort>("fecha");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>("analisis");
   const [analyzing, setAnalyzing] = useState(false);
@@ -68,9 +73,24 @@ export function App() {
   const [keywordsExpanded, setKeywordsExpanded] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
+  // Análisis ya hecho por vacante: "quick" | "deep". Deshabilita su(s) botón(es)
+  // hasta que el usuario edite el perfil o cambie de perfil.
+  const [analysisByJob, setAnalysisByJob] = useState<Record<number, "quick" | "deep">>({});
+  // Evaluación enriquecida (Markdown) por vacante, para renderizar las cards de IA.
+  const [evaluationByJob, setEvaluationByJob] = useState<Record<number, { mode: string; markdown: string }>>({});
+  // Tutorial de bienvenida: aparece solo la primera vez (mientras no haya perfiles)
+  // y se puede reabrir desde el botón "Ayuda". Una vez visto, no vuelve solo.
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [tutorialSeen, setTutorialSeen] = useState(false);
 
+  const hasProfiles = profiles.length > 0;
+  const showTutorial = Boolean(user) && tutorialOpen;
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0] ?? emptyProfile;
   const selectedJob = selectedId ? jobs.find((job) => job.id === selectedId) ?? null : null;
+  // Solo decimos "con IA" si hay un proveedor asignado al analisis CV vs vacante.
+  const usesAi = aiProviders.some((provider) => provider.connected && provider.assignments.some((item) => item.task === "cv_vs_job"));
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -107,17 +127,23 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
-    apiClient.getJobs().then(setJobs).catch(() => undefined);
+    // El tutorial solo se muestra automáticamente si este usuario aún no lo vio.
+    setProfilesLoaded(false);
+    setTutorialStep(0);
+    setTutorialOpen(false);
+    setTutorialSeen(localStorage.getItem(tutorialSeenKey(user.id)) === "1");
     apiClient.getProfiles().then((items) => {
+      // Usa los perfiles REALES de la cuenta (aunque vengan vacíos): así un usuario
+      // sin perfiles ve su bandeja vacía y crea los suyos, en vez de ver mocks ajenos.
+      setProfiles(items);
       if (items.length) {
-        setProfiles(items);
-        setActiveProfileId(items[0].id);
+        setActiveProfileId((items.find((item) => item.active) ?? items[0]).id);
       }
-    }).catch(() => undefined);
+      setProfilesLoaded(true);
+    }).catch(() => setProfilesLoaded(true));
     apiClient.getCredentials().then(setCredentials).catch(() => undefined);
-    apiClient.getSyncRuns().then((items) => {
-      if (items.length) setSyncRuns(items);
-    }).catch(() => undefined);
+    apiClient.getAiProviders().then(setAiProviders).catch(() => undefined);
+    apiClient.getSyncRuns().then(setSyncRuns).catch(() => undefined);
     apiClient.getSubscriptionPlans().then(setPlans).catch(() => undefined);
     apiClient.getCurrentSubscription().then(setSubscription).catch(() => undefined);
     apiClient.getTheme().then((remoteTheme) => {
@@ -129,14 +155,41 @@ export function App() {
     }).catch(() => undefined);
   }, [user]);
 
+  // Apertura automática del tutorial: solo la primera vez, si no tiene perfiles.
+  useEffect(() => {
+    if (profilesLoaded && !hasProfiles && !tutorialSeen) {
+      setTutorialStep(0);
+      setTutorialOpen(true);
+    }
+  }, [profilesLoaded, hasProfiles, tutorialSeen]);
+
+  // Bandeja por perfil: recarga las vacantes del perfil activo al cambiarlo.
+  useEffect(() => {
+    if (!user) return;
+    apiClient.getJobs(activeProfileId).then(setJobs).catch(() => undefined);
+    setSelectedId(null);
+    setEvaluationByJob({});
+  }, [user, activeProfileId]);
+
+  // El estado "ya analizada" (botones deshabilitados) solo se reinicia cuando el
+  // usuario cambia la IA/modelo asignado a "Análisis CV vs vacante".
+  const comparatorKey = aiProviders
+    .flatMap((provider) => provider.assignments.map((item) => ({ provider: provider.provider, task: item.task, model: item.model })))
+    .filter((item) => item.task === "cv_vs_job")
+    .map((item) => `${item.provider}:${item.model}`)
+    .join("|");
+  useEffect(() => {
+    setAnalysisByJob({});
+  }, [comparatorKey]);
+
   const counts = useMemo(() => ({
     total: jobs.length,
     nuevas: jobs.filter((job) => job.status === "nueva").length,
-    alto: jobs.filter((job) => job.score >= 85).length,
+    alto: jobs.filter((job) => displayJobScore(job, activeProfile) >= 85).length,
     aplicadas: jobs.filter((job) => job.status === "aplicada").length,
     descartadas: jobs.filter((job) => job.status === "descartada").length,
     connected: credentials.filter((credential) => credential.status === "connected").length,
-  }), [credentials, jobs]);
+  }), [activeProfile, credentials, jobs]);
 
   const visibleJobs = useMemo(() => {
     let next = [...jobs];
@@ -145,12 +198,14 @@ export function App() {
       next = next.filter((job) => `${job.title} ${job.company} ${job.location} ${job.skills.join(" ")}`.toLowerCase().includes(query));
     }
     if (filter === "nuevas") next = next.filter((job) => job.status === "nueva");
-    if (filter === "alto") next = next.filter((job) => job.score >= 85);
+    if (filter === "alto") next = next.filter((job) => displayJobScore(job, activeProfile) >= 85);
     if (filter === "aplicadas") next = next.filter((job) => job.status === "aplicada");
     if (filter === "descartadas") next = next.filter((job) => job.status === "descartada");
-    if (sort === "score") next.sort((a, b) => b.score - a.score);
+    if (sort === "score") next.sort((a, b) => displayJobScore(b, activeProfile) - displayJobScore(a, activeProfile));
+    // Fecha: más recientes primero. detectedAt es ISO (orden lexicográfico = cronológico).
+    if (sort === "fecha") next.sort((a, b) => (b.detectedAt ?? "").localeCompare(a.detectedAt ?? ""));
     return next;
-  }, [filter, jobs, search, sort]);
+  }, [activeProfile, filter, jobs, search, sort]);
 
   const subtitle = {
     inbox: `${counts.total} vacantes · ${counts.nuevas} nuevas`,
@@ -158,7 +213,10 @@ export function App() {
     settings: `${credentials.length} proveedores`,
     jobs: "1018 totales hoy",
     subscription: subscription ? subscription.plan.name : "planes BYOK",
+    admin_users: "gestion de cuentas",
+    admin_codes: "invitaciones F&F",
   }[view];
+  const profilesLimit = Number(subscription?.plan.limits?.profiles_limit ?? 1) || 1;
 
   const setTheme = (next: ThemeId) => {
     localStorage.setItem("sinfron.theme", next);
@@ -177,40 +235,112 @@ export function App() {
     void apiClient.saveTheme({ theme, accent, density: next });
   };
 
+  // El estado de cada vacante es por perfil y se persiste en el backend.
+  const persistStatus = (id: number, status: Job["status"], reason?: string) => {
+    setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)));
+    void apiClient.updateJobStatus(id, status, reason).catch(() => undefined);
+  };
+
   const selectJob = (id: number) => {
     setSelectedId(id);
-    setDetailTab("analisis");
-    setJobs((current) => current.map((job) => (job.id === id && job.status === "nueva" ? { ...job, status: "vista" } : job)));
+    const job = jobs.find((item) => item.id === id);
+    // Sin análisis aún: abre en el texto original de la vacante; si ya tiene
+    // evaluación, abre en el análisis.
+    setDetailTab(job && job.scoreType !== "prelim" ? "analisis" : "vacante");
+    if (job && job.status === "nueva") persistStatus(id, "vista");
+    // Si fue evaluada con IA y no tenemos el detalle en memoria, lo traemos.
+    if (job && job.scoreType === "IA" && !evaluationByJob[id]) {
+      apiClient.getJobEvaluation(id).then((evaluation) => {
+        if (evaluation.hasEvaluation && evaluation.markdown) {
+          setEvaluationByJob((current) => ({ ...current, [id]: { mode: evaluation.mode || "", markdown: evaluation.markdown || "" } }));
+        }
+      }).catch(() => undefined);
+    }
   };
 
   const applySelected = () => {
     if (!selectedId) return;
-    setJobs((current) => current.map((job) => (job.id === selectedId ? { ...job, status: "aplicada" } : job)));
+    persistStatus(selectedId, "aplicada");
   };
 
-  const dismissSelected = () => {
+  const unapplySelected = () => {
     if (!selectedId) return;
-    setJobs((current) => current.map((job) => (job.id === selectedId ? { ...job, status: "descartada" } : job)));
+    persistStatus(selectedId, "vista");
+  };
+
+  const undiscardSelected = () => {
+    if (!selectedId) return;
+    persistStatus(selectedId, "vista");
+  };
+
+  const dismissSelected = (reason: string) => {
+    if (!selectedId) return;
+    persistStatus(selectedId, "descartada", reason);
     window.setTimeout(() => setSelectedId(null), 220);
   };
 
-  const analyzeSelected = () => {
+  const analyzeSelected = async (mode: AnalysisMode) => {
     if (!selectedId || analyzing) return;
+    const jobId = selectedId;
     setAnalyzing(true);
-    window.setTimeout(() => {
-      setJobs((current) => current.map((job) => (job.id === selectedId ? { ...job, scoreType: "IA", score: Math.min(99, job.score + (job.scoreType === "prelim" ? 4 : 0)) } : job)));
+
+    // Semántico (local): solo cuando NO hay IA asignada a comparación. Siempre
+    // se puede re-ejecutar; sobreescribe el resultado semántico previo.
+    if (mode === "semantic" || !usesAi) {
+      window.setTimeout(() => {
+        setJobs((current) => current.map((job) => (
+          job.id === jobId ? { ...job, scoreType: "semantica", score: buildSemanticAnalysis(job, activeProfile).score } : job
+        )));
+        setDetailTab("analisis");
+        setAnalyzing(false);
+      }, 1200);
+      return;
+    }
+
+    // Con IA: rápido (compacto) o profundo (exhaustivo). El profundo sobreescribe
+    // al rápido. Al terminar, se marca la vacante para deshabilitar su(s) botón(es).
+    const aiMode = mode as "quick" | "deep";
+    try {
+      const result = await apiClient.evaluateJob(jobId, aiMode);
+      if (result.needsSource) {
+        // Sin descripción: no inventamos; el panel muestra "visita el sitio".
+        setDetailTab("analisis");
+        return;
+      }
+      setJobs((current) => current.map((job) => (job.id === jobId ? { ...job, scoreType: "IA", score: result.score } : job)));
+      setAnalysisByJob((current) => ({ ...current, [jobId]: aiMode }));
+      if (result.markdown) {
+        setEvaluationByJob((current) => ({ ...current, [jobId]: { mode: result.mode || aiMode, markdown: result.markdown || "" } }));
+      }
+      setDetailTab("analisis");
+    } catch (error) {
+      console.error("Evaluación con IA falló:", error);
+    } finally {
       setAnalyzing(false);
-    }, 1500);
+    }
   };
 
   const runSync = async () => {
     if (syncing) return;
+    if (!profiles.length) {
+      // Sin perfiles aún: nada que buscar. Llevamos al usuario a crear uno.
+      setView("perfiles");
+      return;
+    }
     setSyncing(true);
-    const run = await apiClient.runSync();
-    setSyncRuns((current) => [run, ...current]);
+    // Búsqueda propia del perfil activo (sus keywords) → alimenta su bandeja.
+    try {
+      const run = await apiClient.runSync(activeProfileId);
+      setSyncRuns((current) => [run, ...current]);
+    } catch (error) {
+      setSyncRuns((current) => [{ id: Date.now(), source: "Manual scan", status: "failed", found: 0, duration: "00:00", started: "ahora", error: error instanceof Error ? error.message : "No se pudo iniciar el escaneo" }, ...current]);
+      setSyncing(false);
+      return;
+    }
     window.setTimeout(() => {
       setSyncing(false);
-      setSyncRuns((current) => current.map((item) => (item.id === run.id ? { ...item, status: "success", found: 11, duration: "00:19" } : item)));
+      apiClient.getSyncRuns().then(setSyncRuns).catch(() => undefined);
+      apiClient.getJobs(activeProfileId).then(setJobs).catch(() => undefined);
     }, 2600);
   };
 
@@ -239,28 +369,72 @@ export function App() {
     setEditorOpen(true);
   };
 
-  const saveProfile = (next: ProfileDraft) => {
-    const profile: Profile = {
+  const saveProfile = async (next: ProfileDraft) => {
+    const exists = profiles.some((item) => item.id === next.id);
+    const localProfile: Profile = {
       ...next,
       initials: next.initials || initialsOf(next.name || "Perfil"),
       name: next.name.trim() || "Nuevo perfil",
     };
-    const exists = profiles.some((item) => item.id === profile.id);
-    setProfiles((current) => (exists ? current.map((item) => (item.id === profile.id ? profile : item)) : [...current, profile]));
-    if (next.active || !exists) setActiveProfileId(profile.id);
+    const { id: _id, active: _active, ...rest } = localProfile;
+    const payload = { ...rest, active: next.active };
     setEditorOpen(false);
+    try {
+      const saved = exists ? await apiClient.updateProfile(next.id, payload) : await apiClient.createProfile(payload);
+      setProfiles((current) => (exists ? current.map((item) => (item.id === saved.id ? saved : item)) : [...current, saved]));
+      if (next.active || !exists) setActiveProfileId(saved.id);
+    } catch {
+      // Sin backend (modo mock): conserva el guardado local para no perder el trabajo.
+      setProfiles((current) => (exists ? current.map((item) => (item.id === localProfile.id ? localProfile : item)) : [...current, localProfile]));
+      if (next.active || !exists) setActiveProfileId(localProfile.id);
+    }
+  };
+
+  const updateProfileInState = (profile: Profile) => {
+    setProfiles((current) => current.map((item) => (item.id === profile.id ? profile : item)));
+    setDraft((current) => (current && current.id === profile.id ? { ...profile, active: current.active ?? Boolean(profile.active) } : current));
+  };
+
+  const deleteProfile = async (id: number) => {
+    setEditorOpen(false);
+    setSelectedId(null);
+    try {
+      await apiClient.deleteProfile(id);
+      // El backend borró el perfil y todas las vacantes propias del usuario.
+      const items = await apiClient.getProfiles();
+      setProfiles(items);
+      if (items.length) setActiveProfileId((items.find((item) => item.active) ?? items[0]).id);
+      const freshJobs = await apiClient.getJobs();
+      setJobs(freshJobs);
+    } catch {
+      // Sin backend: refleja el borrado localmente.
+      setProfiles((current) => current.filter((profile) => profile.id !== id));
+    }
   };
 
   const saveCredential = async (payload: CredentialPayload) => {
     const saved = await apiClient.saveCredential(payload);
     setCredentials((current) => current.map((credential) => (credential.id === payload.providerId ? saved : credential)));
+    // Si es un proveedor de IA, refresca su config (queda "conectado" y habilita modelo/tarea).
+    apiClient.getAiProviders().then(setAiProviders).catch(() => undefined);
+  };
+
+  const updateAiConfig = async (provider: string, assignments: AiAssignment[]) => {
+    const updated = await apiClient.updateAiConfig({ provider, assignments });
+    setAiProviders(updated);
   };
 
   const testCredential = async (id: string, payload?: CredentialTestPayload) => {
     setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: "testing" } : credential)));
-    const result = await apiClient.testCredential(id, payload);
-    setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: credential.maskedKey?.startsWith("sin ") ? "disconnected" : "connected", lastTest: result.message || "test ahora" } : credential)));
-    return result;
+    try {
+      const result = await apiClient.testCredential(id, payload);
+      setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: credential.maskedKey?.startsWith("sin ") ? "disconnected" : "connected", lastTest: result.message || "test ahora" } : credential)));
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "La prueba falló";
+      setCredentials((current) => current.map((credential) => (credential.id === id ? { ...credential, status: "error", lastTest: message } : credential)));
+      throw error; // para que el flujo de WhatsApp (que captura) muestre el error
+    }
   };
 
   const login = async (payload: { email: string; password: string }) => {
@@ -271,6 +445,14 @@ export function App() {
 
   const register = async (payload: { name: string; email: string; password: string }) => {
     return apiClient.register(payload);
+  };
+
+  const logout = () => {
+    apiClient.clearToken();
+    setUser(null);
+    setView("inbox");
+    setSelectedId(null);
+    setNavOpen(false);
   };
 
   const completeOnboarding = async (payload: { theme: ThemeId; accent: string; density: Density }) => {
@@ -288,6 +470,21 @@ export function App() {
     window.location.assign(result.authUrl);
   };
 
+
+  const nextTutorial = () => setTutorialStep((step) => step + 1);
+  const endTutorial = () => {
+    setTutorialOpen(false);
+    setTutorialStep(0);
+    setTutorialSeen(true);
+    if (user) localStorage.setItem(tutorialSeenKey(user.id), "1");
+    setView("perfiles");
+  };
+  const openTutorial = () => {
+    setTutorialStep(0);
+    setTutorialOpen(true);
+    setNavOpen(false);
+  };
+
   if (!authReady || verifyingEmail) {
     return <AuthView verifying={verifyingEmail} verifyError={verifyError} onLogin={login} onRegister={register} />;
   }
@@ -301,6 +498,10 @@ export function App() {
   }
 
   return (
+    <>
+    {showTutorial ? (
+      <OnboardingTutorial step={tutorialStep} onNavigate={setView} onNext={nextTutorial} onSkip={endTutorial} onFinish={endTutorial} />
+    ) : null}
     <AppShell
       view={view}
       subtitle={subtitle}
@@ -312,6 +513,13 @@ export function App() {
       themeMenuOpen={themeMenuOpen}
       counts={{ nuevas: counts.nuevas, connected: counts.connected }}
       activeProfile={activeProfile}
+      userName={user?.name ?? activeProfile.name}
+      userEmail={user?.email ?? activeProfile.email}
+      isAdmin={Boolean(user?.isAdmin)}
+      hasProfiles={hasProfiles}
+      planName={subscription?.plan.name ?? "Free"}
+      profilesUsed={profiles.length}
+      profilesLimit={profilesLimit}
       hasRunning={syncRuns.some((run) => run.status === "running") || syncing}
       onNavigate={setView}
       onCloseNav={() => setNavOpen(false)}
@@ -319,8 +527,11 @@ export function App() {
       onDensity={updateDensity}
       onRunSync={runSync}
       onToggleThemeMenu={() => setThemeMenuOpen((open) => !open)}
+      onCloseThemeMenu={() => setThemeMenuOpen(false)}
       onTheme={setTheme}
       onAccent={setAccent}
+      onLogout={logout}
+      onHelp={openTutorial}
     >
       {view === "inbox" ? (
         <DashboardView
@@ -332,6 +543,9 @@ export function App() {
           selectedJob={selectedJob}
           detailTab={detailTab}
           analyzing={analyzing}
+          usesAi={usesAi}
+          analyzed={selectedJob ? analysisByJob[selectedJob.id] : undefined}
+          evaluation={selectedJob ? evaluationByJob[selectedJob.id] : undefined}
           keywordsExpanded={keywordsExpanded}
           counts={counts}
           onSearch={setSearch}
@@ -341,6 +555,8 @@ export function App() {
           onCloseDetail={() => setSelectedId(null)}
           onTab={setDetailTab}
           onApply={applySelected}
+          onUnapply={unapplySelected}
+          onUndiscard={undiscardSelected}
           onDismiss={dismissSelected}
           onAnalyze={analyzeSelected}
           onClearFilters={() => { setSearch(""); setFilter("todas"); }}
@@ -351,21 +567,28 @@ export function App() {
       {view === "perfiles" ? (
         <ProfilesView
           profiles={profiles}
+          profilesLimit={profilesLimit}
           activeId={activeProfileId}
           activeProfile={activeProfile}
           draft={draft}
           editorOpen={editorOpen}
+          usesAi={usesAi}
           onSelect={setActiveProfileId}
           onNew={openNewProfile}
           onEdit={openEditProfile}
           onCloseEditor={() => setEditorOpen(false)}
           onSave={saveProfile}
+          onDelete={deleteProfile}
+          onProfileUpdated={updateProfileInState}
         />
       ) : null}
 
-      {view === "settings" ? <SettingsView credentials={credentials} onSaveCredential={saveCredential} onTestCredential={testCredential} onConnectGoogle={connectGoogle} /> : null}
-      {view === "jobs" ? <SyncRunsView runs={syncRuns} nuevas={counts.nuevas} /> : null}
+      {view === "settings" ? <SettingsView credentials={credentials} aiProviders={aiProviders} onAiConfig={updateAiConfig} onSaveCredential={saveCredential} onTestCredential={testCredential} onConnectGoogle={connectGoogle} /> : null}
+      {view === "jobs" ? <SyncRunsView runs={syncRuns} totalJobs={counts.total} nuevas={counts.nuevas} /> : null}
       {view === "subscription" ? <SubscriptionView plans={plans} subscription={subscription} /> : null}
+      {view === "admin_users" && user?.isAdmin ? <AdminUsersView plans={plans} currentUserId={user.id} /> : null}
+      {view === "admin_codes" && user?.isAdmin ? <AdminCodesView /> : null}
     </AppShell>
+    </>
   );
 }

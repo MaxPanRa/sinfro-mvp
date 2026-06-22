@@ -3,3 +3,4 @@ redis==5.2.1
 SQLAlchemy==2.0.36
 pydantic-settings==2.7.0
 cryptography==44.0.0
+APScheduler==3.10.4

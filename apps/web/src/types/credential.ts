@@ -15,12 +15,16 @@ export interface CredentialProvider {
 export interface CredentialPayload {
   providerId: string;
   apiKey: string;
+  appId?: string;
+  appKey?: string;
   phoneCode?: string;
   phoneNumber?: string;
 }
 
 export interface CredentialTestPayload {
   apiKey?: string;
+  appId?: string;
+  appKey?: string;
   phoneCode?: string;
   phoneNumber?: string;
 }

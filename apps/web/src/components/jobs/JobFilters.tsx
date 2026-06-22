@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { JobFilter, JobSort } from "../../types/job";
 import { SearchInput } from "../ui/SearchInput";
 
@@ -43,6 +44,44 @@ export function JobFilters({ search, filter, sort, counts, onSearch, onFilter, o
         </div>
       </div>
     </>
+  );
+}
+
+export function InboxJobControls({ search, filter, sort, counts, onSearch, onFilter, onSort }: Parameters<typeof JobFilters>[0]) {
+  return (
+    <div className="results-bar inbox-toolbar">
+      <div className="inbox-toolbar__top">
+        <span className="mono faint" style={{ fontSize: 11.5 }}>{counts.total} vacantes · {counts.nuevas} nuevas</span>
+        <div className="spacer" />
+        <div className="inbox-toolbar__search">
+          <SearchInput value={search} onChange={onSearch} placeholder="Buscar en la bandeja..." />
+        </div>
+      </div>
+
+      <div className="inbox-toolbar__row">
+        <div className="inbox-filter-badges">
+          {filterLabels.map((item) => (
+            <button
+              key={item.id}
+              className={`filter-badge ${filter === item.id ? "is-active" : ""}`}
+              style={{ "--badge-color": item.dot } as CSSProperties}
+              onClick={() => onFilter(item.id)}
+            >
+              <span className="square-dot" />
+              <span>{item.label}</span>
+              <span className="mono">{counts[item.id === "todas" ? "total" : item.id]}</span>
+            </button>
+          ))}
+        </div>
+        <div className="inbox-sort-control">
+          <span className="section-kicker">Ordenar</span>
+          <div className="segmented">
+            <button className={sort === "score" ? "is-active" : ""} onClick={() => onSort("score")}>Score IA</button>
+            <button className={sort === "fecha" ? "is-active" : ""} onClick={() => onSort("fecha")}>Fecha</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

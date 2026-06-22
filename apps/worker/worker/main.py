@@ -5,9 +5,11 @@ from redis import Redis
 
 from worker.config import settings
 from worker.db import process_sync_job
+from worker.digest import start_scheduler
 
 
 def main() -> None:
+    start_scheduler()
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     print("SinFro worker listening on sync_jobs")
     while True:
@@ -21,6 +23,8 @@ def main() -> None:
                 run_id=int(payload["run_id"]),
                 user_id=int(payload["user_id"]),
                 target_user_id=int(payload["target_user_id"]) if payload.get("target_user_id") else None,
+                profile_id=int(payload["profile_id"]) if payload.get("profile_id") else None,
+                keywords=payload.get("keywords") or [],
                 job_family=payload.get("job_family", "software"),
                 summary_minutes=int(payload.get("summary_minutes", 60)),
             )

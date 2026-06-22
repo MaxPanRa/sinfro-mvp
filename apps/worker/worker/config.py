@@ -9,6 +9,16 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Scheduler de resúmenes (corre dentro del contenedor worker).
+    # El envío usa el Gmail conectado de cada usuario (OAuth gmail.send),
+    # por eso no se necesita SMTP aquí.
+    digest_enabled: bool = False
+    digest_interval_minutes: int = 60
+    global_sync_enabled: bool = True
+    global_sync_interval_minutes: int = 60
+    global_jobs_ttl_days: int = 30
+    global_sync_max_matches_per_profile: int = 80
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

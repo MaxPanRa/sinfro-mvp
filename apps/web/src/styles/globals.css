@@ -136,6 +136,10 @@ select {
   }
 }
 
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
 @keyframes pulse {
   0%,
   100% {

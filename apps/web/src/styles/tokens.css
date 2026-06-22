@@ -16,7 +16,7 @@
   --chip: #7d918a;
   --accent: #10A37F;
   --accentH: #0E8F70;
-  --onAccent: #06120E;
+  --onAccent: #FFFFFF;
   --accentW1: rgba(16, 163, 127, 0.1);
   --accentW2: rgba(16, 163, 127, 0.13);
   --accentW3: rgba(16, 163, 127, 0.25);
@@ -290,7 +290,7 @@
 [data-accent="teal"] {
   --accent: #14B8A6;
   --accentH: #0E9E8E;
-  --onAccent: #04211D;
+  --onAccent: #FFFFFF;
   --accentW1: rgba(20, 184, 166, 0.1);
   --accentW2: rgba(20, 184, 166, 0.13);
   --accentW3: rgba(20, 184, 166, 0.25);
@@ -301,7 +301,7 @@
 [data-accent="lima"] {
   --accent: #84CC16;
   --accentH: #6FAE12;
-  --onAccent: #14210A;
+  --onAccent: #102006;
   --accentW1: rgba(132, 204, 22, 0.1);
   --accentW2: rgba(132, 204, 22, 0.13);
   --accentW3: rgba(132, 204, 22, 0.25);
@@ -312,7 +312,7 @@
 [data-accent="cian"] {
   --accent: #06B6D4;
   --accentH: #0E9BB5;
-  --onAccent: #03222A;
+  --onAccent: #FFFFFF;
   --accentW1: rgba(6, 182, 212, 0.1);
   --accentW2: rgba(6, 182, 212, 0.13);
   --accentW3: rgba(6, 182, 212, 0.25);
