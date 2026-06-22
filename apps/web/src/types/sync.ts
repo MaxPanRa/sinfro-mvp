@@ -7,5 +7,6 @@ export interface SyncRun {
   found: number | string;
   duration: string;
   started: string;
+  createdAt?: string | null;
   error?: string;
 }

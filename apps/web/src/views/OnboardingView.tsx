@@ -1,7 +1,7 @@
 import { useState } from "react";
-import type { CSSProperties } from "react";
 import { Sparkles } from "lucide-react";
 import { Button } from "../components/ui/Button";
+import { accentVars } from "../lib/accent";
 import type { Density, ThemeId } from "../types/theme";
 import logoBlack from "../assets/brand/logo_black.png";
 import logoWhite from "../assets/brand/logo_white.png";
@@ -39,7 +39,7 @@ export function OnboardingView({ initialTheme, initialAccent, initialDensity, on
   };
 
   return (
-    <div className="auth-screen" data-theme={theme} style={{ "--accent": accent } as CSSProperties}>
+    <div className="auth-screen" data-theme={theme} style={accentVars(accent)}>
       <div className="onboarding-panel">
         <div className="auth-brand">
           <span className="brand-mark">

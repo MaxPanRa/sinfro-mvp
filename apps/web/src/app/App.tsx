@@ -333,7 +333,7 @@ export function App() {
       const run = await apiClient.runSync(activeProfileId);
       setSyncRuns((current) => [run, ...current]);
     } catch (error) {
-      setSyncRuns((current) => [{ id: Date.now(), source: "Manual scan", status: "failed", found: 0, duration: "00:00", started: "ahora", error: error instanceof Error ? error.message : "No se pudo iniciar el escaneo" }, ...current]);
+      setSyncRuns((current) => [{ id: Date.now(), source: "Manual scan", status: "failed", found: 0, duration: "00:00", started: "ahora", createdAt: new Date().toISOString(), error: error instanceof Error ? error.message : "No se pudo iniciar el escaneo" }, ...current]);
       setSyncing(false);
       return;
     }
@@ -521,6 +521,7 @@ export function App() {
       profilesUsed={profiles.length}
       profilesLimit={profilesLimit}
       hasRunning={syncRuns.some((run) => run.status === "running") || syncing}
+      lastSyncAt={syncRuns.find((run) => run.status === "success")?.createdAt ?? null}
       onNavigate={setView}
       onCloseNav={() => setNavOpen(false)}
       onToggleNav={() => setNavOpen((open) => !open)}

@@ -8,7 +8,7 @@ export function SubscriptionView({ plans, subscription }: { plans: SubscriptionP
   return (
     <div className="view">
       <div className="view-inner">
-        <div className="view-title-row">
+        <div className="view-title-row" data-tour="subscriptions">
           <h2>Planes y suscripcion</h2>
           <span className="mono faint" style={{ fontSize: 12 }}>pagos reales pendientes</span>
         </div>
@@ -38,7 +38,7 @@ export function SubscriptionView({ plans, subscription }: { plans: SubscriptionP
                   </span>
                 ))}
               </div>
-              <Button disabled>{plan.code === activeCode ? "Plan activo" : "Elegir plan"}</Button>
+              {plan.code === activeCode ? <Button disabled>Plan activo</Button> : null}
             </article>
           ))}
         </div>

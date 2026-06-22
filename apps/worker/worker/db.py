@@ -39,6 +39,9 @@ class Profile(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     email: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(255))
+    location: Mapped[str] = mapped_column(String(120))
+    modality: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text)
     keywords: Mapped[list[str]] = mapped_column(JSON)
     skills: Mapped[list[dict]] = mapped_column(JSON)
     plan_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -219,11 +222,14 @@ def process_sync_job(
         owner_id = target_user_id or user_id
         try:
             credentials = load_api_credentials(db, user_id)
+            # Perfil del escaneo: sin él el porcentaje no puede ser semántico (no hay
+            # skills/modalidad/ubicación contra qué comparar la vacante).
+            profile = db.scalar(select(Profile).where(Profile.id == profile_id)) if profile_id else None
             fetched_jobs = fetch_all_real_jobs(job_family=job_family, credentials=credentials, keywords=keywords)
             if fetched_jobs:
                 clear_demo_seed_jobs(db, owner_id, profile_id)
                 clear_non_matching_real_jobs(db, owner_id, profile_id, keywords)
-            inserted = upsert_real_jobs(db, owner_id, fetched_jobs, profile_id)
+            inserted = upsert_real_jobs(db, owner_id, fetched_jobs, profile_id, profile)
             run.status = "success"
             run.found = str(inserted)
             run.duration = duration_label(started_at)
@@ -317,10 +323,54 @@ def score_profile_match(job: JobPosting, terms: list[str]) -> int:
     return max(0, min(99, score))
 
 
+def semantic_match_score(skills: list[str] | None, description: str | None, modality: str | None, location: str | None, profile: Profile) -> int:
+    """Análisis SEMÁNTICO local: compara las skills reales del perfil contra el TEXTO
+    de la vacante (skills + descripción) y pondera modalidad/ubicación. Réplica del
+    ``buildSemanticAnalysis`` del frontend: skills 70%, modalidad 15%, ubicación 15%.
+    Determinista y sin IA; es el porcentaje que se muestra al escanear y hacer match.
+    """
+    job_text = f"{' '.join(skills or [])} {description or ''}".lower()
+    profile_skills = [
+        str(skill["name"]).strip()
+        for skill in (profile.skills or [])
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
+    ]
+    if profile_skills:
+        matched = sum(1 for name in profile_skills if name.lower() in job_text)
+        skills_score = round(matched / len(profile_skills) * 100)
+    else:
+        skills_score = 0
+
+    profile_modality = (profile.modality or "").lower()
+    remote = "remot" in f"{modality or ''} {location or ''}".lower()
+    if profile_modality and modality and modality.lower() in profile_modality:
+        modality_score = 100
+    elif remote:
+        modality_score = 85
+    else:
+        modality_score = 50
+
+    profile_loc = (profile.location or "").lower()
+    job_loc = (location or "").lower()
+    if remote or not job_loc:
+        location_score = 100
+    elif profile_loc and (profile_loc in job_loc or job_loc in profile_loc or "latam" in job_loc):
+        location_score = 100
+    else:
+        location_score = 55
+
+    score = round(skills_score * 0.7 + modality_score * 0.15 + location_score * 0.15)
+    return max(0, min(99, score))
+
+
 def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile: Profile, global_jobs: list[JobPosting]) -> int:
     terms = profile_terms(profile)
     matches = [job for job in global_jobs if job_matches_profile(job, terms)]
-    matches = sorted(matches, key=lambda row: score_profile_match(row, terms), reverse=True)[:settings.global_sync_max_matches_per_profile]
+    matches = sorted(
+        matches,
+        key=lambda row: semantic_match_score(row.skills, row.description, row.modality, row.location, profile),
+        reverse=True,
+    )[:settings.global_sync_max_matches_per_profile]
     inserted = 0
     for source_job in matches:
         posting = db.scalar(
@@ -345,8 +395,8 @@ def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile
             inserted += 1
         posting.modality = source_job.modality
         posting.location = source_job.location
-        posting.score = score_profile_match(source_job, terms)
-        posting.score_type = "prelim"
+        posting.score = semantic_match_score(source_job.skills, source_job.description, source_job.modality, source_job.location, profile)
+        posting.score_type = "semantica"
         posting.status = posting.status or "nueva"
         posting.detected = source_job.detected
         posting.url = source_job.url
@@ -1109,7 +1159,7 @@ def credential_is_usable(value: str) -> bool:
     return not any(token in lowered for token in placeholders)
 
 
-def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: int | None = None) -> int:
+def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: int | None = None, profile: Profile | None = None) -> int:
     changed = 0
     for item in jobs:
         posting = db.scalar(
@@ -1134,8 +1184,12 @@ def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: 
             changed += 1
         posting.modality = item["modality"]
         posting.location = item["location"]
-        posting.score = item["score"]
-        posting.score_type = item["score_type"]
+        if profile is not None:
+            posting.score = semantic_match_score(item["skills"], item["description"], item["modality"], item["location"], profile)
+            posting.score_type = "semantica"
+        else:
+            posting.score = item["score"]
+            posting.score_type = item["score_type"]
         posting.status = posting.status or item["status"]
         posting.detected = item["detected"]
         posting.url = item["url"]

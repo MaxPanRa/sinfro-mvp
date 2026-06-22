@@ -2,6 +2,23 @@ import type { Job, JobStatus } from "../types/job";
 import type { Profile } from "../types/profile";
 import type { SyncRunStatus } from "../types/sync";
 
+// "hace X min/h/d" a partir de un timestamp ISO; espejo del relative_time_label
+// del backend, pero calculado en el cliente para que el chip se actualice en vivo.
+export function relativeTimeLabel(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const moment = new Date(iso).getTime();
+  if (Number.isNaN(moment)) return null;
+  const seconds = Math.floor((Date.now() - moment) / 1000);
+  if (seconds < 45) return "ahora";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return "hace un momento";
+  if (minutes < 60) return `hace ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days} d`;
+}
+
 export function scoreBand(score: number) {
   if (score >= 85) return { color: "#047857", bg: "rgba(16,163,127,0.14)", label: "Alto match" };
   if (score >= 60) return { color: "#1D4ED8", bg: "rgba(78,167,245,0.13)", label: "Match medio" };

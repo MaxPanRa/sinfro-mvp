@@ -328,7 +328,7 @@ export const apiClient = {
 
   async runSync(profileId?: number): Promise<SyncRun> {
     const query = profileId ? `?profile_id=${profileId}` : "";
-    return request<SyncRun>(`/sync/run${query}`, { method: "POST" }, { id: Date.now(), source: "Manual scan", status: "running", found: "—", duration: "00:00", started: "ahora" });
+    return request<SyncRun>(`/sync/run${query}`, { method: "POST" }, { id: Date.now(), source: "Manual scan", status: "running", found: "—", duration: "00:00", started: "ahora", createdAt: new Date().toISOString() });
   },
 
   async getSyncRuns(): Promise<SyncRun[]> {

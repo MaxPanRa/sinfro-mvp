@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Menu, Palette, Zap } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ThemeMenu } from "./ThemeMenu";
+import { relativeTimeLabel } from "../../lib/formatters";
 import type { AccentId, Density, ThemeId, ViewId } from "../../types/theme";
 
 const titles: Record<ViewId, string> = {
@@ -18,6 +19,7 @@ interface TopBarProps {
   view: ViewId;
   density: Density;
   syncing: boolean;
+  lastSyncAt: string | null;
   theme: ThemeId;
   accent: AccentId;
   navOpen: boolean;
@@ -31,8 +33,10 @@ interface TopBarProps {
   onAccent: (accent: AccentId) => void;
 }
 
-export function TopBar({ view, density, syncing, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
+export function TopBar({ view, density, syncing, lastSyncAt, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
   const themeMenuRef = useRef<HTMLDivElement>(null);
+  // Re-render periódico para que la etiqueta "hace X min" no se quede congelada.
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (!themeMenuOpen) return;
@@ -42,6 +46,13 @@ export function TopBar({ view, density, syncing, theme, accent, navOpen, themeMe
     window.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => window.removeEventListener("pointerdown", closeOnOutsidePointer);
   }, [onCloseThemeMenu, themeMenuOpen]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((value) => value + 1), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const lastSyncLabel = relativeTimeLabel(lastSyncAt);
 
   return (
     <header className="topbar">
@@ -57,7 +68,7 @@ export function TopBar({ view, density, syncing, theme, accent, navOpen, themeMe
 
       <div className="status-chip desktop-only">
         <span className={`status-dot ${syncing ? "is-running" : ""}`} />
-        {syncing ? "Sincronizando..." : "Sync · hace 5 min"}
+        {syncing ? "Sincronizando..." : lastSyncLabel ? `Sync · ${lastSyncLabel}` : "Sin escaneos aún"}
       </div>
       <div ref={themeMenuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button className="icon-button" onClick={onToggleThemeMenu} title="Tema" aria-label="Tema">

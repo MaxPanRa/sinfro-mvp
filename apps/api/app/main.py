@@ -1452,7 +1452,7 @@ def relative_time_label(value) -> str:
 @app.get("/sync/runs")
 def sync_runs(db: DbDep, user: Annotated[User, Depends(current_user)]) -> list[dict]:
     rows = db.scalars(select(JobRun).where(JobRun.user_id == user.id).order_by(JobRun.id.desc())).all()
-    return [{"id": row.id, "source": row.source, "status": row.status, "found": int(row.found) if row.found.isdigit() else "—", "duration": row.duration, "started": relative_time_label(row.created_at), "error": row.error} for row in rows]
+    return [{"id": row.id, "source": row.source, "status": row.status, "found": int(row.found) if row.found.isdigit() else "—", "duration": row.duration, "started": relative_time_label(row.created_at), "createdAt": row.created_at.isoformat() if row.created_at else None, "error": row.error} for row in rows]
 
 
 @app.post("/sync/run")
@@ -1489,7 +1489,7 @@ def run_sync(db: DbDep, redis: RedisDep, user: Annotated[User, Depends(current_u
         "job_family": "any",
         "summary_minutes": 60,
     }))
-    return {"id": run.id, "source": run.source, "status": run.status, "found": "—", "duration": run.duration, "started": run.started, "limit": daily_limit, "usedToday": len(used_today) + 1}
+    return {"id": run.id, "source": run.source, "status": run.status, "found": "—", "duration": run.duration, "started": run.started, "createdAt": run.created_at.isoformat() if run.created_at else None, "limit": daily_limit, "usedToday": len(used_today) + 1}
 
 
 @app.post("/dev/seed-demo")
