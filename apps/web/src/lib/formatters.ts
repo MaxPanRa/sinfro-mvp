@@ -62,13 +62,88 @@ export function initialsOf(name: string) {
   return name.trim().split(/\s+/).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "P";
 }
 
+// Sinónimos/traducciones EN<->ES (espejo de SKILL_SYNONYM_GROUPS del worker). Las
+// tecnologías (React, Python…) son iguales en ambos idiomas; aquí van los términos
+// que cambian, para que el match funcione tengas el CV en español o inglés.
+const SKILL_SYNONYM_GROUPS: string[][] = [
+  ["trabajo en equipo", "teamwork", "team work"],
+  ["liderazgo", "leadership"],
+  ["comunicacion", "communication"],
+  ["resolucion de problemas", "problem solving", "problem-solving"],
+  ["pensamiento critico", "critical thinking"],
+  ["gestion de proyectos", "project management"],
+  ["aprendizaje", "learning"],
+  ["aprendizaje automatico", "machine learning"],
+  ["aprendizaje profundo", "deep learning"],
+  ["inteligencia artificial", "artificial intelligence", "ia", "ai"],
+  ["ciencia de datos", "data science"],
+  ["analisis de datos", "data analysis", "data analytics", "analitica de datos"],
+  ["bases de datos", "databases", "database", "base de datos"],
+  ["desarrollo de software", "software development"],
+  ["ingenieria de software", "software engineering"],
+  ["desarrollo web", "web development"],
+  ["desarrollo movil", "mobile development"],
+  ["desarrollo", "development"],
+  ["programacion", "programming", "coding"],
+  ["diseno", "design"],
+  ["diseno web", "web design"],
+  ["experiencia de usuario", "user experience", "ux"],
+  ["interfaz de usuario", "user interface", "ui"],
+  ["pruebas", "testing"],
+  ["aseguramiento de calidad", "quality assurance", "qa"],
+  ["seguridad", "security"],
+  ["redes", "networking"],
+  ["nube", "cloud"],
+  ["computacion en la nube", "cloud computing"],
+  ["metodologias agiles", "agile", "agil"],
+  ["control de versiones", "version control"],
+  ["atencion al cliente", "customer service", "customer support"],
+  ["ventas", "sales"],
+  ["mercadotecnia", "marketing", "mercadeo"],
+  ["contabilidad", "accounting"],
+  ["recursos humanos", "human resources", "hr", "rrhh"],
+  ["gestion", "management"],
+  ["administracion", "administration"],
+  ["arquitectura de software", "software architecture"],
+  ["creatividad", "creativity"],
+  ["innovacion", "innovation"],
+  ["negociacion", "negotiation"],
+  ["planeacion estrategica", "strategic planning", "planificacion estrategica"],
+  ["gestion del tiempo", "time management"],
+];
+
+const normSkill = (value: string) => (value || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+const SYNONYM_INDEX = new Map<string, Set<string>>();
+for (const group of SKILL_SYNONYM_GROUPS) {
+  const variants = new Set(group.map(normSkill));
+  for (const variant of variants) {
+    const set = SYNONYM_INDEX.get(variant) ?? new Set<string>();
+    variants.forEach((item) => set.add(item));
+    SYNONYM_INDEX.set(variant, set);
+  }
+}
+
+function skillVariants(term: string): Set<string> {
+  const norm = normSkill(term).trim();
+  if (!norm) return new Set();
+  return SYNONYM_INDEX.get(norm) ?? new Set([norm]);
+}
+
+function termInText(term: string, textNorm: string): boolean {
+  for (const variant of skillVariants(term)) {
+    if (variant && textNorm.includes(variant)) return true;
+  }
+  return false;
+}
+
 // Análisis SEMÁNTICO honesto: compara el perfil real (skills + palabras clave)
-// contra el TEXTO de la vacante (tags + descripción). El score se deriva del match
-// real, no del heurístico preliminar. Ponderación: contenido (skills y palabras
-// clave) 60%, esquema 20%, ubicación 20%. Espejo de semantic_match_score (worker).
+// contra el TEXTO de la vacante (tags + descripción), en INGLÉS y ESPAÑOL (cada
+// término se expande a sus equivalentes). Ponderación: contenido 60%, esquema 20%,
+// ubicación 20%. Espejo de semantic_match_score (worker).
 export function buildSemanticAnalysis(job: Job, profile: Profile) {
-  // Texto completo de la vacante donde buscar los términos del candidato.
-  const jobText = `${(job.skills || []).join(" ")} ${job.description || ""}`.toLowerCase();
+  // Texto de la vacante normalizado (sin acentos) donde buscar los términos.
+  const jobText = normSkill(`${(job.skills || []).join(" ")} ${job.description || ""}`);
   // Términos del perfil: skills + palabras clave, deduplicados (case-insensitive).
   const rawTerms = [...(profile.skills || []).map((skill) => skill.name), ...(profile.keywords || [])].filter(Boolean);
   const seen = new Set<string>();
@@ -78,8 +153,8 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
     seen.add(key);
     return true;
   });
-  const matched = terms.filter((term) => jobText.includes(term.toLowerCase()));
-  const missing = terms.filter((term) => !jobText.includes(term.toLowerCase()));
+  const matched = terms.filter((term) => termInText(term, jobText));
+  const missing = terms.filter((term) => !termInText(term, jobText));
   // % de TUS skills/keywords que la vacante realmente menciona (relevancia del perfil).
   const relevanceScore = terms.length ? Math.round((matched.length / terms.length) * 100) : 0;
 

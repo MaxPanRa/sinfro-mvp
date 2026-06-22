@@ -417,14 +417,90 @@ def score_profile_match(job: JobPosting, terms: list[str]) -> int:
     return max(0, min(99, score))
 
 
+def _strip_accents(value: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", value or "") if unicodedata.category(c) != "Mn")
+
+
+def _norm_text(value: str | None) -> str:
+    return _strip_accents((value or "").lower())
+
+
+# Sinónimos/traducciones EN<->ES de skills y términos comunes. Las tecnologías
+# (React, Python, Docker…) son iguales en ambos idiomas y no necesitan entrada;
+# aquí van los términos que cambian (soft skills, áreas, roles).
+SKILL_SYNONYM_GROUPS: list[list[str]] = [
+    ["trabajo en equipo", "teamwork", "team work"],
+    ["liderazgo", "leadership"],
+    ["comunicacion", "communication"],
+    ["resolucion de problemas", "problem solving", "problem-solving"],
+    ["pensamiento critico", "critical thinking"],
+    ["gestion de proyectos", "project management"],
+    ["aprendizaje", "learning"],
+    ["aprendizaje automatico", "machine learning"],
+    ["aprendizaje profundo", "deep learning"],
+    ["inteligencia artificial", "artificial intelligence", "ia", "ai"],
+    ["ciencia de datos", "data science"],
+    ["analisis de datos", "data analysis", "data analytics", "analitica de datos"],
+    ["bases de datos", "databases", "database", "base de datos"],
+    ["desarrollo de software", "software development"],
+    ["ingenieria de software", "software engineering"],
+    ["desarrollo web", "web development"],
+    ["desarrollo movil", "mobile development"],
+    ["desarrollo", "development"],
+    ["programacion", "programming", "coding"],
+    ["diseno", "design"],
+    ["diseno web", "web design"],
+    ["experiencia de usuario", "user experience", "ux"],
+    ["interfaz de usuario", "user interface", "ui"],
+    ["pruebas", "testing"],
+    ["aseguramiento de calidad", "quality assurance", "qa"],
+    ["seguridad", "security"],
+    ["redes", "networking"],
+    ["nube", "cloud"],
+    ["computacion en la nube", "cloud computing"],
+    ["metodologias agiles", "agile", "agil"],
+    ["control de versiones", "version control"],
+    ["atencion al cliente", "customer service", "customer support"],
+    ["ventas", "sales"],
+    ["mercadotecnia", "marketing", "mercadeo"],
+    ["contabilidad", "accounting"],
+    ["recursos humanos", "human resources", "hr", "rrhh"],
+    ["gestion", "management"],
+    ["administracion", "administration"],
+    ["arquitectura de software", "software architecture"],
+    ["creatividad", "creativity"],
+    ["innovacion", "innovation"],
+    ["negociacion", "negotiation"],
+    ["planeacion estrategica", "strategic planning", "planificacion estrategica"],
+    ["gestion del tiempo", "time management"],
+]
+
+_SYNONYM_INDEX: dict[str, set[str]] = {}
+for _group in SKILL_SYNONYM_GROUPS:
+    _variants = {_norm_text(v) for v in _group}
+    for _v in _variants:
+        _SYNONYM_INDEX.setdefault(_v, set()).update(_variants)
+
+
+def skill_variants(term: str) -> set[str]:
+    """Variantes EN/ES de un término (incluye el propio término normalizado)."""
+    norm = _norm_text(term).strip()
+    if not norm:
+        return set()
+    return set(_SYNONYM_INDEX.get(norm, {norm}))
+
+
+def term_in_text(term: str, text_norm: str) -> bool:
+    return any(variant and variant in text_norm for variant in skill_variants(term))
+
+
 def semantic_match_score(skills: list[str] | None, description: str | None, modality: str | None, location: str | None, profile: Profile) -> int:
     """Análisis SEMÁNTICO local: compara las skills + palabras clave reales del perfil
-    contra el TEXTO de la vacante (skills + descripción) y pondera esquema/ubicación.
-    Réplica del ``buildSemanticAnalysis`` del frontend: contenido (skills y palabras
-    clave) 60%, esquema 20%, ubicación 20%. Determinista y sin IA; es el porcentaje
-    que se muestra al escanear y hacer match.
+    contra el TEXTO de la vacante (skills + descripción), en INGLÉS y ESPAÑOL (cada
+    término se expande a sus equivalentes), y pondera esquema/ubicación. Réplica del
+    ``buildSemanticAnalysis`` del frontend: contenido 60%, esquema 20%, ubicación 20%.
     """
-    job_text = f"{' '.join(skills or [])} {description or ''}".lower()
+    job_text = _norm_text(f"{' '.join(skills or [])} {description or ''}")
     terms: list[str] = [
         str(skill["name"]).strip()
         for skill in (profile.skills or [])
@@ -435,7 +511,7 @@ def semantic_match_score(skills: list[str] | None, description: str | None, moda
     seen: set[str] = set()
     unique_terms = [term for term in terms if not (term.lower() in seen or seen.add(term.lower()))]
     if unique_terms:
-        matched = sum(1 for term in unique_terms if term.lower() in job_text)
+        matched = sum(1 for term in unique_terms if term_in_text(term, job_text))
         relevance_score = round(matched / len(unique_terms) * 100)
     else:
         relevance_score = 0
@@ -454,10 +530,6 @@ def semantic_match_score(skills: list[str] | None, description: str | None, moda
     # La ubicación pesa más (lo demás se reparte entre contenido y esquema).
     score = round(relevance_score * 0.5 + modality_score * 0.2 + location_score * 0.3)
     return max(0, min(99, score))
-
-
-def _strip_accents(value: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFD", value) if unicodedata.category(c) != "Mn")
 
 
 def job_location_allowed(location: str | None, profile: Profile) -> bool:
