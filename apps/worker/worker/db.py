@@ -743,6 +743,27 @@ def record_global_sync_run(db, user_id: int, found: int) -> None:
     run.created_at = datetime.now(timezone.utc)
 
 
+def reap_stale_runs(max_minutes: int = 15) -> int:
+    """Marca como fallidas las corridas que quedaron en 'running' más de ``max_minutes``.
+    Pasa si el worker murió a mitad de un escaneo: nadie cierra el ``JobRun`` y la bandeja
+    lo muestra 'Ejecutando' para siempre. Un escaneo real tarda ~5 min, así que 15 min es
+    margen de sobra."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_minutes)
+    with SessionLocal() as db:
+        stale = db.scalars(
+            select(JobRun).where(JobRun.status == "running", JobRun.created_at < cutoff)
+        ).all()
+        for run in stale:
+            run.status = "failed"
+            run.found = "0"
+            run.error = "Escaneo interrumpido (worker reiniciado)"
+            run.duration = duration_label(ensure_aware(run.created_at))
+        db.commit()
+        if stale:
+            print(f"reaped {len(stale)} stale run(s) stuck in 'running'")
+        return len(stale)
+
+
 def run_global_sync_cycle() -> dict[str, int]:
     """Alimenta el pool global, genera matches por perfil y manda Gmail por usuario."""
     started_at = datetime.now(timezone.utc)

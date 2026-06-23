@@ -1,14 +1,14 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-sinfro}
       POSTGRES_USER: ${POSTGRES_USER:-sinfro}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sinfro}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Sin "ports": solo accesible por la red interna de compose (api/worker).
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sinfro} -d ${POSTGRES_DB:-sinfro}"]
       interval: 5s
@@ -17,10 +17,15 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    # requirepass vacío = sin auth (red interna). Definí REDIS_PASSWORD para activarla.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    # Sin "ports": solo accesible por la red interna de compose (api/worker).
+    # El healthcheck añade -a solo si hay password (sirve con auth y sin auth).
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} --no-auth-warning ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -28,6 +33,7 @@ services:
   api:
     build:
       context: ./apps/api
+    restart: unless-stopped
     env_file:
       - path: .env
         required: false
@@ -45,6 +51,7 @@ services:
   worker:
     build:
       context: ./apps/worker
+    restart: unless-stopped
     env_file:
       - path: .env
         required: false
@@ -60,6 +67,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
         VITE_SCAN_INTERVAL_MIN: ${VITE_SCAN_INTERVAL_MIN:-60}
+    restart: unless-stopped
     ports:
       - "5173:80"
     depends_on:
@@ -67,6 +75,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    restart: unless-stopped
     env_file:
       - path: .env
         required: false

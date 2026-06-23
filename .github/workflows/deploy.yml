@@ -38,7 +38,8 @@ jobs:
             POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
             DATABASE_URL=postgresql+psycopg://sinfro:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/sinfro
 
-            REDIS_URL=redis://redis:6379/0
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            REDIS_URL=redis://:${{ secrets.REDIS_PASSWORD }}@redis:6379/0
 
             API_HOST=0.0.0.0
             API_PORT=8000

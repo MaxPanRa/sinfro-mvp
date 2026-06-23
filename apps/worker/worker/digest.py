@@ -15,6 +15,7 @@ from worker.db import (
     build_scan_summary,
     decrypt_secret,
     encrypt_secret,
+    reap_stale_runs,
     refresh_google_access_token,
     run_global_sync_cycle,
     send_self_summary,
@@ -81,22 +82,33 @@ def start_scheduler() -> None:
     manual igual manda correo, sin depender de ninguna variable de entorno.
     """
     global _scheduler
-    if not settings.global_sync_enabled:
-        print("global sync: scheduler disabled (GLOBAL_SYNC_ENABLED=false); manual scans still email")
-        return
-
-    if not (settings.google_client_id and settings.google_client_secret):
-        print("gmail: missing Google credentials; token refresh may fail")
-
     _scheduler = BackgroundScheduler(timezone="UTC")
+
+    # Reaper periódico: cierra corridas 'running' huérfanas aunque el worker no se
+    # reinicie (corre en el hilo del scheduler, independiente del consumidor de la cola).
     _scheduler.add_job(
-        run_global_sync_cycle,
+        reap_stale_runs,
         trigger="interval",
-        minutes=settings.global_sync_interval_minutes,
-        id="global_sync",
+        minutes=10,
+        id="reap_stale_runs",
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(timezone.utc),
     )
-    print(f"global sync + email: scheduler active every {settings.global_sync_interval_minutes} min")
+
+    if settings.global_sync_enabled:
+        if not (settings.google_client_id and settings.google_client_secret):
+            print("gmail: missing Google credentials; token refresh may fail")
+        _scheduler.add_job(
+            run_global_sync_cycle,
+            trigger="interval",
+            minutes=settings.global_sync_interval_minutes,
+            id="global_sync",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc),
+        )
+        print(f"global sync + email: scheduler active every {settings.global_sync_interval_minutes} min")
+    else:
+        print("global sync: scheduler disabled (GLOBAL_SYNC_ENABLED=false); manual scans still email")
+
     _scheduler.start()
