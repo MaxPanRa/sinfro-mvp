@@ -75,52 +75,66 @@ function roleMatchTerms(profile: Profile): string[] {
   return out.slice(0, 8);
 }
 
-// Match SIMPLE (espejo de simple_match_score del worker): rol/puesto (50%) +
-// ubicación (30%) + esquema (20%). La relevancia se mide contra el TÍTULO + skills
-// de la vacante (no la descripción): es rápido y reparte bien el % en 0-99, en vez
-// de quedar casi siempre en ~50 por dividir entre decenas de términos del perfil.
+// Match en dos tramos (espejo de simple_match_score del worker/API):
+//  1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
+//  2) Densidad de relevancia: +3% por palabra clave y +1% por skill del perfil que
+//     aparezca en el texto de la vacante (título + descripción + skills). Clamp 0-99.
 export function buildSemanticAnalysis(job: Job, profile: Profile) {
-  const haystack = normSkill(`${job.title || ""} ${(job.skills || []).join(" ")}`);
-  const terms = roleMatchTerms(profile);
-  const matched = terms.filter((term) => haystack.includes(term));
-  const missing = terms.filter((term) => !haystack.includes(term));
-  // % de las palabras de tu rol que aparecen en el título/skills de la vacante.
-  const roleScore = terms.length ? Math.round((matched.length / terms.length) * 100) : 60;
+  // --- 1) Base estructural (máx 50) ---
+  const roleHay = normSkill(`${job.title || ""} ${(job.skills || []).join(" ")}`);
+  const roleTerms = roleMatchTerms(profile);
+  const matchedRole = roleTerms.filter((term) => roleHay.includes(term));
+  const roleScore = roleTerms.length ? Math.round((matchedRole.length / roleTerms.length) * 100) : 60;
+  const roleComponent = Math.round((roleScore / 100) * 20);
 
   const profileModality = (profile.modality || "").toLowerCase();
   const remote = `${job.modality} ${job.location}`.toLowerCase().includes("remot");
   const modalityScore = profileModality && job.modality && profileModality.includes(job.modality.toLowerCase()) ? 100 : remote ? 85 : 50;
+  const modalityComponent = modalityScore >= 100 ? 15 : modalityScore >= 85 ? 13 : 8;
 
   const profileLoc = (profile.location || "").toLowerCase();
   const jobLoc = (job.location || "").toLowerCase();
-  const locationScore = remote || !jobLoc ? 100 : profileLoc && (profileLoc.includes(jobLoc) || jobLoc.includes(profileLoc) || jobLoc.includes("latam")) ? 100 : 55;
+  const locationAllowed = remote || !jobLoc || (!!profileLoc && (profileLoc.includes(jobLoc) || jobLoc.includes(profileLoc) || jobLoc.includes("latam")));
+  const locationScore = locationAllowed ? 100 : 55;
+  const locationComponent = locationAllowed ? 15 : 8;
 
-  // Ponderación: rol 50%, ubicación 30%, esquema 20% (igual que el backend).
-  const score = Math.min(99, Math.round(roleScore * 0.5 + locationScore * 0.3 + modalityScore * 0.2));
+  const base = roleComponent + locationComponent + modalityComponent;
 
-  const reasons = matched.length
-    ? [`El puesto coincide con tu rol objetivo en: ${matched.slice(0, 6).join(", ")}.`]
-    : ["El título de la vacante no coincide con las palabras de tu rol objetivo."];
+  // --- 2) Densidad de relevancia sobre el texto de la vacante ---
+  const text = normSkill(`${job.title || ""} ${job.description || ""} ${(job.skills || []).join(" ")}`);
+  const matchedKeywords = (profile.keywords || []).filter((k) => { const t = normSkill(k); return !!t && text.includes(t); });
+  const matchedSkills = (profile.skills || []).map((s) => s.name).filter((s) => { const t = normSkill(s); return !!t && text.includes(t); });
+  const keywordBonus = matchedKeywords.length * 3;
+  const skillBonus = matchedSkills.length;
+
+  const score = Math.min(99, base + keywordBonus + skillBonus);
+
+  const matched = [...matchedKeywords, ...matchedSkills];
+  const reasons: string[] = [];
+  if (matchedRole.length) reasons.push(`El puesto coincide con tu rol en: ${matchedRole.slice(0, 6).join(", ")}.`);
+  if (matchedKeywords.length || matchedSkills.length) reasons.push(`Menciona ${matchedKeywords.length} de tus palabras clave (+${keywordBonus}%) y ${matchedSkills.length} skills (+${skillBonus}%).`);
   if (modalityScore >= 85) reasons.push(`Esquema ${job.modality.toLowerCase()} compatible con tu preferencia.`);
-  if (locationScore >= 100) reasons.push("Ubicación compatible con tu perfil.");
+  if (locationAllowed) reasons.push("Ubicación compatible con tu perfil.");
+  if (!reasons.length) reasons.push("Coincidencia baja: el texto de la vacante no menciona tu rol, palabras clave ni skills.");
+
   const gaps = [
-    roleScore < 40
-      ? "Coincidencia de puesto baja: el título no refleja tu rol objetivo."
-      : `${missing.length} término(s) de tu rol no aparecen en el título de la vacante.`,
-    "El match es aproximado (rol, ubicación y esquema). Usa el análisis con IA para una evaluación precisa.",
+    matchedRole.length ? `${roleTerms.length - matchedRole.length} término(s) de tu rol no aparecen en el título.` : "El título no refleja tu rol objetivo.",
+    "El match es aproximado (rol, ubicación, esquema y densidad de tus términos). Usa el análisis con IA para una evaluación precisa.",
   ];
 
+  const relevancePct = Math.min(99, keywordBonus + skillBonus);
   return {
     score,
     reasons,
     gaps,
     breakdown: [
       { key: "Rol / puesto", value: roleScore, color: scoreBand(roleScore).color },
-      { key: "Esquema", value: modalityScore, color: scoreBand(modalityScore).color },
       { key: "Ubicación", value: locationScore, color: scoreBand(locationScore).color },
+      { key: "Esquema", value: modalityScore, color: scoreBand(modalityScore).color },
+      { key: "Relevancia (frases + skills)", value: relevancePct, color: scoreBand(relevancePct).color },
     ],
     matched,
-    missing,
+    missing: [] as string[],
   };
 }
 

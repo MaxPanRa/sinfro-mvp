@@ -1332,7 +1332,7 @@ def recalculate_jobs(db: DbDep, user: Annotated[User, Depends(current_user)], pr
     for row in rows:
         if (row.score_type or "").lower() == "ia":
             continue  # respetamos las evaluaciones con IA
-        row.score = simple_match_score(row.title, row.skills, row.modality, row.location, profile)
+        row.score = simple_match_score(row.title, row.skills, row.modality, row.location, profile, row.description)
         row.score_type = "semantica"
         recalculated += 1
     db.commit()

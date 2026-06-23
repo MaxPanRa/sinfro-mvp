@@ -433,33 +433,54 @@ def role_match_terms(profile: Profile) -> list[str]:
     return [w for w in words if not (w in seen or seen.add(w))][:8]
 
 
-def simple_match_score(title: str | None, skills: list[str] | None, modality: str | None, location: str | None, profile: Profile) -> int:
-    """Compatibilidad SIMPLE y rápida: rol/puesto (50%) + ubicación (30%) + esquema (20%).
+def simple_match_score(
+    title: str | None,
+    skills: list[str] | None,
+    modality: str | None,
+    location: str | None,
+    profile: Profile,
+    description: str | None = None,
+) -> int:
+    """Compatibilidad en dos tramos, simple y rápido:
 
-    No analiza la descripción ni expande sinónimos: eso era lento y, al dividir entre
-    decenas de términos del perfil, dejaba casi todo en ~50. Ahora la relevancia se mide
-    solo contra el TÍTULO + skills de la vacante (textos cortos), que es lo que de verdad
-    indica el puesto, y el resultado se reparte mejor en el rango 0-99.
+    1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
+    2) Densidad de relevancia (sube por encima de la base): +3 por cada palabra
+       clave del perfil y +1 por cada skill que aparezca en el texto de la vacante
+       (título + descripción + skills). Clamp final 0-99.
     """
-    haystack = _norm_text(f"{title or ''} {' '.join(skills or [])}")
-    terms = role_match_terms(profile)
-    if terms:
-        matched = sum(1 for term in terms if term in haystack)
-        role_score = round(matched / len(terms) * 100)
+    # --- 1) Base estructural (máx 50) ---
+    role_terms = role_match_terms(profile)
+    if role_terms:
+        role_hay = _norm_text(f"{title or ''} {' '.join(skills or [])}")
+        matched_role = sum(1 for term in role_terms if term in role_hay)
+        role_component = round(matched_role / len(role_terms) * 20)
     else:
-        role_score = 60  # perfil sin rol definido: relevancia neutra
+        role_component = 12  # sin rol definido: neutro
+
+    location_component = 15 if job_location_allowed(location, profile) else 8
 
     profile_modality = (profile.modality or "").lower()
     if profile_modality and modality and modality.lower() in profile_modality:
-        modality_score = 100
+        modality_component = 15
     elif "remot" in f"{modality or ''} {location or ''}".lower():
-        modality_score = 85
+        modality_component = 13
     else:
-        modality_score = 50
+        modality_component = 8
 
-    location_score = 100 if job_location_allowed(location, profile) else 55
+    base = role_component + location_component + modality_component
 
-    return max(0, min(99, round(role_score * 0.5 + location_score * 0.3 + modality_score * 0.2)))
+    # --- 2) Densidad de relevancia sobre el texto de la vacante ---
+    text = _norm_text(f"{title or ''} {description or ''} {' '.join(skills or [])}")
+    keyword_bonus = sum(
+        3 for keyword in (profile.keywords or []) if (term := _norm_text(str(keyword))) and term in text
+    )
+    skill_bonus = sum(
+        1
+        for skill in (profile.skills or [])
+        if (term := _norm_text(str(skill.get("name") if isinstance(skill, dict) else skill or ""))) and term in text
+    )
+
+    return max(0, min(99, base + keyword_bonus + skill_bonus))
 
 
 def job_location_allowed(location: str | None, profile: Profile) -> bool:
@@ -481,7 +502,7 @@ def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile
     terms = profile_terms(profile)
     # Puntúa una sola vez por vacante (antes se recalculaba en el sort y otra vez al guardar).
     scored = [
-        (job, simple_match_score(job.title, job.skills, job.modality, job.location, profile))
+        (job, simple_match_score(job.title, job.skills, job.modality, job.location, profile, job.description))
         for job in global_jobs
         if job_matches_profile(job, terms) and job_location_allowed(job.location, profile)
     ]
@@ -1344,7 +1365,7 @@ def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: 
         posting.modality = item["modality"]
         posting.location = item["location"]
         if profile is not None:
-            posting.score = simple_match_score(item["title"], item["skills"], item["modality"], item["location"], profile)
+            posting.score = simple_match_score(item["title"], item["skills"], item["modality"], item["location"], profile, item["description"])
             posting.score_type = "semantica"
         else:
             posting.score = item["score"]

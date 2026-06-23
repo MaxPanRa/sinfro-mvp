@@ -37,25 +37,41 @@ def job_location_allowed(location: str | None, profile) -> bool:
     return any(token and (token in loc or loc in token) for token in tokens)
 
 
-def simple_match_score(title: str | None, skills: list[str] | None, modality: str | None, location: str | None, profile) -> int:
-    """Compatibilidad SIMPLE: rol/puesto (50%) + ubicación (30%) + esquema (20%).
-    La relevancia se mide contra el TÍTULO + skills de la vacante (no la descripción)."""
-    haystack = _norm_text(f"{title or ''} {' '.join(skills or [])}")
-    terms = role_match_terms(profile)
-    if terms:
-        matched = sum(1 for term in terms if term in haystack)
-        role_score = round(matched / len(terms) * 100)
+def simple_match_score(title: str | None, skills: list[str] | None, modality: str | None, location: str | None, profile, description: str | None = None) -> int:
+    """Compatibilidad en dos tramos:
+
+    1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
+    2) Densidad de relevancia: +3 por palabra clave y +1 por skill del perfil que
+       aparezca en el texto de la vacante (título + descripción + skills). Clamp 0-99.
+    """
+    role_terms = role_match_terms(profile)
+    if role_terms:
+        role_hay = _norm_text(f"{title or ''} {' '.join(skills or [])}")
+        matched_role = sum(1 for term in role_terms if term in role_hay)
+        role_component = round(matched_role / len(role_terms) * 20)
     else:
-        role_score = 60
+        role_component = 12
+
+    location_component = 15 if job_location_allowed(location, profile) else 8
 
     profile_modality = (getattr(profile, "modality", "") or "").lower()
     if profile_modality and modality and modality.lower() in profile_modality:
-        modality_score = 100
+        modality_component = 15
     elif "remot" in f"{modality or ''} {location or ''}".lower():
-        modality_score = 85
+        modality_component = 13
     else:
-        modality_score = 50
+        modality_component = 8
 
-    location_score = 100 if job_location_allowed(location, profile) else 55
+    base = role_component + location_component + modality_component
 
-    return max(0, min(99, round(role_score * 0.5 + location_score * 0.3 + modality_score * 0.2)))
+    text = _norm_text(f"{title or ''} {description or ''} {' '.join(skills or [])}")
+    keyword_bonus = sum(
+        3 for keyword in (getattr(profile, "keywords", None) or []) if (term := _norm_text(str(keyword))) and term in text
+    )
+    skill_bonus = sum(
+        1
+        for skill in (getattr(profile, "skills", None) or [])
+        if (term := _norm_text(str(skill.get("name") if isinstance(skill, dict) else skill or ""))) and term in text
+    )
+
+    return max(0, min(99, base + keyword_bonus + skill_bonus))
