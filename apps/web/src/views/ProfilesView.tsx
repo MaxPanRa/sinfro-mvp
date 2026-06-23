@@ -8,6 +8,7 @@ import { Button } from "../components/ui/Button";
 interface ProfilesViewProps {
   profiles: Profile[];
   profilesLimit: number;
+  keywordsLimit: number;
   activeId: number;
   activeProfile: Profile;
   draft: ProfileDraft | null;
@@ -22,7 +23,7 @@ interface ProfilesViewProps {
   onProfileUpdated: (profile: Profile) => void;
 }
 
-export function ProfilesView({ profiles, profilesLimit, activeId, activeProfile, draft, editorOpen, usesAi, onSelect, onNew, onEdit, onCloseEditor, onSave, onDelete, onProfileUpdated }: ProfilesViewProps) {
+export function ProfilesView({ profiles, profilesLimit, keywordsLimit, activeId, activeProfile, draft, editorOpen, usesAi, onSelect, onNew, onEdit, onCloseEditor, onSave, onDelete, onProfileUpdated }: ProfilesViewProps) {
   const isEmpty = profiles.length === 0;
   const atLimit = profiles.length >= profilesLimit;
   return (
@@ -57,6 +58,7 @@ export function ProfilesView({ profiles, profilesLimit, activeId, activeProfile,
         open={editorOpen}
         draft={draft}
         usesAi={usesAi}
+        keywordsLimit={keywordsLimit}
         existing={draft ? profiles.some((profile) => profile.id === draft.id) : false}
         onClose={onCloseEditor}
         onSave={onSave}

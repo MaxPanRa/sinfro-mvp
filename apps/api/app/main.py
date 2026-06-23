@@ -580,6 +580,13 @@ def plan_profile_limit(plan: SubscriptionPlan | None) -> int:
     return int(plan.limits.get("profiles_limit", 1))
 
 
+def plan_keywords_limit(plan: SubscriptionPlan | None) -> int:
+    """Máximo de palabras clave ("frases") por perfil según el plan (default 5)."""
+    if not plan or not plan.limits:
+        return 5
+    return int(plan.limits.get("keywords_limit", 5))
+
+
 def user_subscription(db: Session, user_id: int) -> UserSubscription | None:
     return db.scalar(select(UserSubscription).where(UserSubscription.user_id == user_id).order_by(UserSubscription.id.desc()))
 
@@ -998,6 +1005,7 @@ def create_profile(payload: ProfileIn, db: DbDep, user: Annotated[User, Depends(
     subscription = user_subscription(db, user.id)
     if visible_profile_count(db, user.id) >= plan_profile_limit(subscription.plan if subscription else None):
         raise HTTPException(status_code=403, detail="Tu plan no permite más perfiles activos")
+    keywords = (payload.keywords or [])[:plan_keywords_limit(subscription.plan if subscription else None)]
 
     has_profiles = db.scalar(select(Profile.id).where(Profile.user_id == user.id, Profile.plan_disabled == False)) is not None  # noqa: E712
     make_active = payload.active or not has_profiles  # el primer perfil queda activo
@@ -1015,7 +1023,7 @@ def create_profile(payload: ProfileIn, db: DbDep, user: Annotated[User, Depends(
         salary=payload.salary,
         cv_status=payload.cvStatus,
         description=payload.description,
-        keywords=payload.keywords,
+        keywords=keywords,
         skills=[skill.model_dump() for skill in payload.skills],
         active=make_active,
         plan_disabled=False,
@@ -1031,6 +1039,8 @@ def update_profile(profile_id: int, payload: ProfileIn, db: DbDep, user: Annotat
     profile = db.scalar(select(Profile).where(Profile.id == profile_id, Profile.user_id == user.id, Profile.plan_disabled == False))  # noqa: E712
     if not profile:
         raise HTTPException(status_code=404, detail="Perfil no encontrado")
+    subscription = user_subscription(db, user.id)
+    keywords = (payload.keywords or [])[:plan_keywords_limit(subscription.plan if subscription else None)]
     if payload.active and not profile.active:
         db.execute(update(Profile).where(Profile.user_id == user.id, Profile.plan_disabled == False).values(active=False))  # noqa: E712
     profile.initials = payload.initials or initials_from(payload.name or "Perfil")
@@ -1043,7 +1053,7 @@ def update_profile(profile_id: int, payload: ProfileIn, db: DbDep, user: Annotat
     profile.salary = payload.salary
     profile.cv_status = payload.cvStatus
     profile.description = payload.description
-    profile.keywords = payload.keywords
+    profile.keywords = keywords
     profile.skills = [skill.model_dump() for skill in payload.skills]
     profile.active = payload.active
     db.commit()

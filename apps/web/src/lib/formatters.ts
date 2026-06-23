@@ -62,101 +62,30 @@ export function initialsOf(name: string) {
   return name.trim().split(/\s+/).map((word) => word[0]).slice(0, 2).join("").toUpperCase() || "P";
 }
 
-// Sinónimos/traducciones EN<->ES (espejo de SKILL_SYNONYM_GROUPS del worker). Las
-// tecnologías (React, Python…) son iguales en ambos idiomas; aquí van los términos
-// que cambian, para que el match funcione tengas el CV en español o inglés.
-const SKILL_SYNONYM_GROUPS: string[][] = [
-  ["trabajo en equipo", "teamwork", "team work"],
-  ["liderazgo", "leadership"],
-  ["comunicacion", "communication"],
-  ["resolucion de problemas", "problem solving", "problem-solving"],
-  ["pensamiento critico", "critical thinking"],
-  ["gestion de proyectos", "project management"],
-  ["aprendizaje", "learning"],
-  ["aprendizaje automatico", "machine learning"],
-  ["aprendizaje profundo", "deep learning"],
-  ["inteligencia artificial", "artificial intelligence", "ia", "ai"],
-  ["ciencia de datos", "data science"],
-  ["analisis de datos", "data analysis", "data analytics", "analitica de datos"],
-  ["bases de datos", "databases", "database", "base de datos"],
-  ["desarrollo de software", "software development"],
-  ["ingenieria de software", "software engineering"],
-  ["desarrollo web", "web development"],
-  ["desarrollo movil", "mobile development"],
-  ["desarrollo", "development"],
-  ["programacion", "programming", "coding"],
-  ["diseno", "design"],
-  ["diseno web", "web design"],
-  ["experiencia de usuario", "user experience", "ux"],
-  ["interfaz de usuario", "user interface", "ui"],
-  ["pruebas", "testing"],
-  ["aseguramiento de calidad", "quality assurance", "qa"],
-  ["seguridad", "security"],
-  ["redes", "networking"],
-  ["nube", "cloud"],
-  ["computacion en la nube", "cloud computing"],
-  ["metodologias agiles", "agile", "agil"],
-  ["control de versiones", "version control"],
-  ["atencion al cliente", "customer service", "customer support"],
-  ["ventas", "sales"],
-  ["mercadotecnia", "marketing", "mercadeo"],
-  ["contabilidad", "accounting"],
-  ["recursos humanos", "human resources", "hr", "rrhh"],
-  ["gestion", "management"],
-  ["administracion", "administration"],
-  ["arquitectura de software", "software architecture"],
-  ["creatividad", "creativity"],
-  ["innovacion", "innovation"],
-  ["negociacion", "negotiation"],
-  ["planeacion estrategica", "strategic planning", "planificacion estrategica"],
-  ["gestion del tiempo", "time management"],
-];
-
 const normSkill = (value: string) => (value || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-const SYNONYM_INDEX = new Map<string, Set<string>>();
-for (const group of SKILL_SYNONYM_GROUPS) {
-  const variants = new Set(group.map(normSkill));
-  for (const variant of variants) {
-    const set = SYNONYM_INDEX.get(variant) ?? new Set<string>();
-    variants.forEach((item) => set.add(item));
-    SYNONYM_INDEX.set(variant, set);
-  }
-}
-
-function skillVariants(term: string): Set<string> {
-  const norm = normSkill(term).trim();
-  if (!norm) return new Set();
-  return SYNONYM_INDEX.get(norm) ?? new Set([norm]);
-}
-
-function termInText(term: string, textNorm: string): boolean {
-  for (const variant of skillVariants(term)) {
-    if (variant && textNorm.includes(variant)) return true;
-  }
-  return false;
-}
-
-// Análisis SEMÁNTICO honesto: compara el perfil real (skills + palabras clave)
-// contra el TEXTO de la vacante (tags + descripción), en INGLÉS y ESPAÑOL (cada
-// término se expande a sus equivalentes). Ponderación: contenido 60%, esquema 20%,
-// ubicación 20%. Espejo de semantic_match_score (worker).
-export function buildSemanticAnalysis(job: Job, profile: Profile) {
-  // Texto de la vacante normalizado (sin acentos) donde buscar los términos.
-  const jobText = normSkill(`${(job.skills || []).join(" ")} ${job.description || ""}`);
-  // Términos del perfil: skills + palabras clave, deduplicados (case-insensitive).
-  const rawTerms = [...(profile.skills || []).map((skill) => skill.name), ...(profile.keywords || [])].filter(Boolean);
+// Palabras significativas del rol/puesto del perfil (espejo de role_match_terms del worker).
+function roleMatchTerms(profile: Profile): string[] {
+  const words = normSkill(profile.role || "").match(/[a-z0-9.+#]+/g) || [];
   const seen = new Set<string>();
-  const terms = rawTerms.filter((term) => {
-    const key = term.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const matched = terms.filter((term) => termInText(term, jobText));
-  const missing = terms.filter((term) => !termInText(term, jobText));
-  // % de TUS skills/keywords que la vacante realmente menciona (relevancia del perfil).
-  const relevanceScore = terms.length ? Math.round((matched.length / terms.length) * 100) : 0;
+  const out: string[] = [];
+  for (const word of words) {
+    if (word.length >= 3 && !seen.has(word)) { seen.add(word); out.push(word); }
+  }
+  return out.slice(0, 8);
+}
+
+// Match SIMPLE (espejo de simple_match_score del worker): rol/puesto (50%) +
+// ubicación (30%) + esquema (20%). La relevancia se mide contra el TÍTULO + skills
+// de la vacante (no la descripción): es rápido y reparte bien el % en 0-99, en vez
+// de quedar casi siempre en ~50 por dividir entre decenas de términos del perfil.
+export function buildSemanticAnalysis(job: Job, profile: Profile) {
+  const haystack = normSkill(`${job.title || ""} ${(job.skills || []).join(" ")}`);
+  const terms = roleMatchTerms(profile);
+  const matched = terms.filter((term) => haystack.includes(term));
+  const missing = terms.filter((term) => !haystack.includes(term));
+  // % de las palabras de tu rol que aparecen en el título/skills de la vacante.
+  const roleScore = terms.length ? Math.round((matched.length / terms.length) * 100) : 60;
 
   const profileModality = (profile.modality || "").toLowerCase();
   const remote = `${job.modality} ${job.location}`.toLowerCase().includes("remot");
@@ -166,18 +95,19 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
   const jobLoc = (job.location || "").toLowerCase();
   const locationScore = remote || !jobLoc ? 100 : profileLoc && (profileLoc.includes(jobLoc) || jobLoc.includes(profileLoc) || jobLoc.includes("latam")) ? 100 : 55;
 
-  // Ponderación pedida: ubicación con más peso (30%), esquema 20%, contenido 50%.
-  const score = Math.round(relevanceScore * 0.5 + modalityScore * 0.2 + locationScore * 0.3);
+  // Ponderación: rol 50%, ubicación 30%, esquema 20% (igual que el backend).
+  const score = Math.min(99, Math.round(roleScore * 0.5 + locationScore * 0.3 + modalityScore * 0.2));
 
   const reasons = matched.length
-    ? [`${matched.length} de tus ${terms.length} skills/palabras clave aparecen en esta vacante: ${matched.slice(0, 6).join(", ")}.`]
-    : ["Ninguna de tus skills o palabras clave aparece en el texto de la vacante: poca relación con tu perfil."];
+    ? [`El puesto coincide con tu rol objetivo en: ${matched.slice(0, 6).join(", ")}.`]
+    : ["El título de la vacante no coincide con las palabras de tu rol objetivo."];
   if (modalityScore >= 85) reasons.push(`Esquema ${job.modality.toLowerCase()} compatible con tu preferencia.`);
+  if (locationScore >= 100) reasons.push("Ubicación compatible con tu perfil.");
   const gaps = [
-    relevanceScore < 40
-      ? "El match de contenido es bajo: esta vacante exige skills/temas que tu perfil no refleja."
-      : `${missing.length} de tus skills/palabras clave no se mencionan en esta vacante.`,
-    "El análisis semántico es aproximado (busca coincidencias de texto). Usa el análisis con IA para una evaluación precisa.",
+    roleScore < 40
+      ? "Coincidencia de puesto baja: el título no refleja tu rol objetivo."
+      : `${missing.length} término(s) de tu rol no aparecen en el título de la vacante.`,
+    "El match es aproximado (rol, ubicación y esquema). Usa el análisis con IA para una evaluación precisa.",
   ];
 
   return {
@@ -185,7 +115,7 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
     reasons,
     gaps,
     breakdown: [
-      { key: "Skills y palabras clave", value: relevanceScore, color: scoreBand(relevanceScore).color },
+      { key: "Rol / puesto", value: roleScore, color: scoreBand(roleScore).color },
       { key: "Esquema", value: modalityScore, color: scoreBand(modalityScore).color },
       { key: "Ubicación", value: locationScore, color: scoreBand(locationScore).color },
     ],

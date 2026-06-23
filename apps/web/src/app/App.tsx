@@ -237,6 +237,7 @@ export function App() {
     admin_codes: "invitaciones F&F",
   }[view];
   const profilesLimit = Number(subscription?.plan.limits?.profiles_limit ?? 1) || 1;
+  const keywordsLimit = Number(subscription?.plan.limits?.keywords_limit ?? 5) || 5;
 
   const setTheme = (next: ThemeId) => {
     localStorage.setItem("sinfron.theme", next);
@@ -624,6 +625,7 @@ export function App() {
         <ProfilesView
           profiles={profiles}
           profilesLimit={profilesLimit}
+          keywordsLimit={keywordsLimit}
           activeId={activeProfileId}
           activeProfile={activeProfile}
           draft={draft}

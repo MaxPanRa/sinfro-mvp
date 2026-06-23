@@ -425,111 +425,41 @@ def _norm_text(value: str | None) -> str:
     return _strip_accents((value or "").lower())
 
 
-# Sinónimos/traducciones EN<->ES de skills y términos comunes. Las tecnologías
-# (React, Python, Docker…) son iguales en ambos idiomas y no necesitan entrada;
-# aquí van los términos que cambian (soft skills, áreas, roles).
-SKILL_SYNONYM_GROUPS: list[list[str]] = [
-    ["trabajo en equipo", "teamwork", "team work"],
-    ["liderazgo", "leadership"],
-    ["comunicacion", "communication"],
-    ["resolucion de problemas", "problem solving", "problem-solving"],
-    ["pensamiento critico", "critical thinking"],
-    ["gestion de proyectos", "project management"],
-    ["aprendizaje", "learning"],
-    ["aprendizaje automatico", "machine learning"],
-    ["aprendizaje profundo", "deep learning"],
-    ["inteligencia artificial", "artificial intelligence", "ia", "ai"],
-    ["ciencia de datos", "data science"],
-    ["analisis de datos", "data analysis", "data analytics", "analitica de datos"],
-    ["bases de datos", "databases", "database", "base de datos"],
-    ["desarrollo de software", "software development"],
-    ["ingenieria de software", "software engineering"],
-    ["desarrollo web", "web development"],
-    ["desarrollo movil", "mobile development"],
-    ["desarrollo", "development"],
-    ["programacion", "programming", "coding"],
-    ["diseno", "design"],
-    ["diseno web", "web design"],
-    ["experiencia de usuario", "user experience", "ux"],
-    ["interfaz de usuario", "user interface", "ui"],
-    ["pruebas", "testing"],
-    ["aseguramiento de calidad", "quality assurance", "qa"],
-    ["seguridad", "security"],
-    ["redes", "networking"],
-    ["nube", "cloud"],
-    ["computacion en la nube", "cloud computing"],
-    ["metodologias agiles", "agile", "agil"],
-    ["control de versiones", "version control"],
-    ["atencion al cliente", "customer service", "customer support"],
-    ["ventas", "sales"],
-    ["mercadotecnia", "marketing", "mercadeo"],
-    ["contabilidad", "accounting"],
-    ["recursos humanos", "human resources", "hr", "rrhh"],
-    ["gestion", "management"],
-    ["administracion", "administration"],
-    ["arquitectura de software", "software architecture"],
-    ["creatividad", "creativity"],
-    ["innovacion", "innovation"],
-    ["negociacion", "negotiation"],
-    ["planeacion estrategica", "strategic planning", "planificacion estrategica"],
-    ["gestion del tiempo", "time management"],
-]
-
-_SYNONYM_INDEX: dict[str, set[str]] = {}
-for _group in SKILL_SYNONYM_GROUPS:
-    _variants = {_norm_text(v) for v in _group}
-    for _v in _variants:
-        _SYNONYM_INDEX.setdefault(_v, set()).update(_variants)
-
-
-def skill_variants(term: str) -> set[str]:
-    """Variantes EN/ES de un término (incluye el propio término normalizado)."""
-    norm = _norm_text(term).strip()
-    if not norm:
-        return set()
-    return set(_SYNONYM_INDEX.get(norm, {norm}))
-
-
-def term_in_text(term: str, text_norm: str) -> bool:
-    return any(variant and variant in text_norm for variant in skill_variants(term))
-
-
-def semantic_match_score(skills: list[str] | None, description: str | None, modality: str | None, location: str | None, profile: Profile) -> int:
-    """Análisis SEMÁNTICO local: compara las skills + palabras clave reales del perfil
-    contra el TEXTO de la vacante (skills + descripción), en INGLÉS y ESPAÑOL (cada
-    término se expande a sus equivalentes), y pondera esquema/ubicación. Réplica del
-    ``buildSemanticAnalysis`` del frontend: contenido 60%, esquema 20%, ubicación 20%.
-    """
-    job_text = _norm_text(f"{' '.join(skills or [])} {description or ''}")
-    terms: list[str] = [
-        str(skill["name"]).strip()
-        for skill in (profile.skills or [])
-        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
-    ]
-    terms += [str(keyword).strip() for keyword in (profile.keywords or []) if str(keyword or "").strip()]
-    # Dedup case-insensitive para no contar dos veces lo que esté en skills y keywords.
+def role_match_terms(profile: Profile) -> list[str]:
+    """Palabras significativas del rol/puesto del perfil, para el match simple.
+    Ej.: "Front-end Developer React / Next.js" -> [front, end, developer, react, next, js]."""
+    words = [w for w in re.findall(r"[a-z0-9.+#]+", _norm_text(profile.role or "")) if len(w) >= 3]
     seen: set[str] = set()
-    unique_terms = [term for term in terms if not (term.lower() in seen or seen.add(term.lower()))]
-    if unique_terms:
-        matched = sum(1 for term in unique_terms if term_in_text(term, job_text))
-        relevance_score = round(matched / len(unique_terms) * 100)
+    return [w for w in words if not (w in seen or seen.add(w))][:8]
+
+
+def simple_match_score(title: str | None, skills: list[str] | None, modality: str | None, location: str | None, profile: Profile) -> int:
+    """Compatibilidad SIMPLE y rápida: rol/puesto (50%) + ubicación (30%) + esquema (20%).
+
+    No analiza la descripción ni expande sinónimos: eso era lento y, al dividir entre
+    decenas de términos del perfil, dejaba casi todo en ~50. Ahora la relevancia se mide
+    solo contra el TÍTULO + skills de la vacante (textos cortos), que es lo que de verdad
+    indica el puesto, y el resultado se reparte mejor en el rango 0-99.
+    """
+    haystack = _norm_text(f"{title or ''} {' '.join(skills or [])}")
+    terms = role_match_terms(profile)
+    if terms:
+        matched = sum(1 for term in terms if term in haystack)
+        role_score = round(matched / len(terms) * 100)
     else:
-        relevance_score = 0
+        role_score = 60  # perfil sin rol definido: relevancia neutra
 
     profile_modality = (profile.modality or "").lower()
-    remote = "remot" in f"{modality or ''} {location or ''}".lower()
     if profile_modality and modality and modality.lower() in profile_modality:
         modality_score = 100
-    elif remote:
+    elif "remot" in f"{modality or ''} {location or ''}".lower():
         modality_score = 85
     else:
         modality_score = 50
 
     location_score = 100 if job_location_allowed(location, profile) else 55
 
-    # La ubicación pesa más (lo demás se reparte entre contenido y esquema).
-    score = round(relevance_score * 0.5 + modality_score * 0.2 + location_score * 0.3)
-    return max(0, min(99, score))
+    return max(0, min(99, round(role_score * 0.5 + location_score * 0.3 + modality_score * 0.2)))
 
 
 def job_location_allowed(location: str | None, profile: Profile) -> bool:
@@ -549,14 +479,15 @@ def job_location_allowed(location: str | None, profile: Profile) -> bool:
 
 def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile: Profile, global_jobs: list[JobPosting]) -> int:
     terms = profile_terms(profile)
-    matches = [job for job in global_jobs if job_matches_profile(job, terms) and job_location_allowed(job.location, profile)]
-    matches = sorted(
-        matches,
-        key=lambda row: semantic_match_score(row.skills, row.description, row.modality, row.location, profile),
-        reverse=True,
-    )[:settings.global_sync_max_matches_per_profile]
+    # Puntúa una sola vez por vacante (antes se recalculaba en el sort y otra vez al guardar).
+    scored = [
+        (job, simple_match_score(job.title, job.skills, job.modality, job.location, profile))
+        for job in global_jobs
+        if job_matches_profile(job, terms) and job_location_allowed(job.location, profile)
+    ]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
     inserted = 0
-    for source_job in matches:
+    for source_job, match_score in scored[:settings.global_sync_max_matches_per_profile]:
         posting = db.scalar(
             select(JobPosting).where(
                 JobPosting.user_id == user_id,
@@ -579,7 +510,7 @@ def upsert_global_matches_for_profile(db, user_id: int, profile_id: int, profile
             inserted += 1
         posting.modality = source_job.modality
         posting.location = source_job.location
-        posting.score = semantic_match_score(source_job.skills, source_job.description, source_job.modality, source_job.location, profile)
+        posting.score = match_score
         posting.score_type = "semantica"
         posting.status = posting.status or "nueva"
         posting.detected = source_job.detected
@@ -1413,7 +1344,7 @@ def upsert_real_jobs(db, owner_id: int, jobs: list[dict[str, Any]], profile_id: 
         posting.modality = item["modality"]
         posting.location = item["location"]
         if profile is not None:
-            posting.score = semantic_match_score(item["skills"], item["description"], item["modality"], item["location"], profile)
+            posting.score = simple_match_score(item["title"], item["skills"], item["modality"], item["location"], profile)
             posting.score_type = "semantica"
         else:
             posting.score = item["score"]

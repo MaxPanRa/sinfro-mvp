@@ -169,7 +169,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$0",
             "description": "Pool global, 5 refresh manuales por dia y BYOK basico.",
             "features": ["Pool global", "5 refresh manuales/dia", "1 perfil activo", "BYOK local"],
-            "limits": {"profiles_limit": 1, "manual_refresh_per_day": 5, "global_pool_access": True, "custom_sync": False, "deep_analysis": False},
+            "limits": {"profiles_limit": 1, "manual_refresh_per_day": 5, "keywords_limit": 5, "global_pool_access": True, "custom_sync": False, "deep_analysis": False},
         },
         {
             "code": "friends_family",
@@ -177,7 +177,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$0 beta",
             "description": "Plan tester con mas margen para ayudar a probar SinFro.",
             "features": ["Pool global", "15 refresh manuales/dia", "3 perfiles", "Features beta"],
-            "limits": {"profiles_limit": 3, "manual_refresh_per_day": 15, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "beta_features": True},
+            "limits": {"profiles_limit": 3, "manual_refresh_per_day": 15, "keywords_limit": 5, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "beta_features": True},
         },
         {
             "code": "pro_byok",
@@ -185,7 +185,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$12/mes",
             "description": "Multi-perfil, analisis profundo, sync programado y mas fuentes.",
             "features": ["5 perfiles", "Sync programado", "Analisis profundo", "Historial extendido"],
-            "limits": {"profiles_limit": 5, "manual_refresh_per_day": 30, "global_pool_access": True, "custom_sync": True, "deep_analysis": True},
+            "limits": {"profiles_limit": 5, "manual_refresh_per_day": 30, "keywords_limit": 10, "global_pool_access": True, "custom_sync": True, "deep_analysis": True},
         },
         {
             "code": "team_byok",
@@ -193,7 +193,7 @@ def upsert_plans(db: Session) -> dict[str, SubscriptionPlan]:
             "price_label": "$39/mes",
             "description": "Colaboracion para equipos pequenos con llaves propias.",
             "features": ["Usuarios de equipo", "Roles", "Historial compartido", "Fuentes compartidas"],
-            "limits": {"profiles_limit": 20, "manual_refresh_per_day": 100, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "team_users": True},
+            "limits": {"profiles_limit": 20, "manual_refresh_per_day": 100, "keywords_limit": 15, "global_pool_access": True, "custom_sync": True, "deep_analysis": True, "team_users": True},
         },
     ]
     plans: dict[str, SubscriptionPlan] = {}

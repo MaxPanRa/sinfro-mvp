@@ -14,13 +14,14 @@ interface ProfileEditorModalProps {
   draft: ProfileDraft | null;
   usesAi: boolean;
   existing: boolean;
+  keywordsLimit: number;
   onClose: () => void;
   onSave: (draft: ProfileDraft) => void;
   onDelete: (id: number) => void;
   onProfileUpdated?: (profile: Profile) => void;
 }
 
-export function ProfileEditorModal({ open, draft, usesAi, existing, onClose, onSave, onDelete, onProfileUpdated }: ProfileEditorModalProps) {
+export function ProfileEditorModal({ open, draft, usesAi, existing, keywordsLimit, onClose, onSave, onDelete, onProfileUpdated }: ProfileEditorModalProps) {
   const [newKeyword, setNewKeyword] = useState("");
   const [newSkill, setNewSkill] = useState("");
   const [newLevel, setNewLevel] = useState(7);
@@ -120,9 +121,11 @@ export function ProfileEditorModal({ open, draft, usesAi, existing, onClose, onS
   if (!localDraft) return null;
 
   const setField = (field: keyof ProfileDraft, value: string | boolean) => setLocalDraft({ ...localDraft, [field]: value });
+  const keywordsFull = localDraft.keywords.length >= keywordsLimit;
   const addKeyword = () => {
     const value = newKeyword.trim().toLowerCase();
     if (!value || localDraft.keywords.includes(value)) return setNewKeyword("");
+    if (localDraft.keywords.length >= keywordsLimit) return; // límite del plan
     setLocalDraft({ ...localDraft, keywords: [...localDraft.keywords, value] });
     setNewKeyword("");
   };
@@ -231,13 +234,14 @@ export function ProfileEditorModal({ open, draft, usesAi, existing, onClose, onS
           </div>
 
           <EditableChips
-            title={`Palabras clave · ${localDraft.keywords.length}`}
+            title={`Palabras clave · ${localDraft.keywords.length}/${keywordsLimit}`}
             empty="Sin palabras clave aun"
             value={newKeyword}
-            placeholder="Escribe y presiona Enter..."
+            placeholder={keywordsFull ? `Límite de tu plan: ${keywordsLimit} frases` : "Escribe y presiona Enter..."}
             onValue={setNewKeyword}
             onAdd={addKeyword}
             onEnter={addKeyword}
+            disabled={keywordsFull}
           >
             {localDraft.keywords.map((keyword) => (
               <span className="chip" key={keyword}>{keyword}<Remove onClick={() => setLocalDraft({ ...localDraft, keywords: localDraft.keywords.filter((item) => item !== keyword) })} /></span>
@@ -303,7 +307,7 @@ export function ProfileEditorModal({ open, draft, usesAi, existing, onClose, onS
   );
 }
 
-function EditableChips({ title, empty, children, value, placeholder, onValue, onAdd, onEnter, level, onLevel, suggestions = [], onPick }: { title: string; empty: string; children: React.ReactNode; value: string; placeholder: string; onValue: (value: string) => void; onAdd: () => void; onEnter: () => void; level?: number; onLevel?: (value: number) => void; suggestions?: string[]; onPick?: (value: string) => void }) {
+function EditableChips({ title, empty, children, value, placeholder, onValue, onAdd, onEnter, level, onLevel, suggestions = [], onPick, disabled = false }: { title: string; empty: string; children: React.ReactNode; value: string; placeholder: string; onValue: (value: string) => void; onAdd: () => void; onEnter: () => void; level?: number; onLevel?: (value: number) => void; suggestions?: string[]; onPick?: (value: string) => void; disabled?: boolean }) {
   const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
   return (
     <div style={{ marginBottom: 20 }}>
@@ -312,13 +316,13 @@ function EditableChips({ title, empty, children, value, placeholder, onValue, on
         {hasChildren ? children : <span className="faint" style={{ fontSize: 11.5 }}>{empty}</span>}
       </div>
       <div style={{ display: "flex", gap: 8, position: "relative" }}>
-        <input className="field" value={value} placeholder={placeholder} onChange={(event) => onValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEnter(); } }} />
+        <input className="field" value={value} placeholder={placeholder} disabled={disabled} onChange={(event) => onValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onEnter(); } }} />
         {typeof level === "number" && onLevel ? (
           <select className="field select" style={{ width: 118, flexShrink: 0 }} value={level} onChange={(event) => onLevel(Number(event.target.value))}>
             {Array.from({ length: 10 }, (_, index) => <option key={index + 1} value={index + 1}>Nivel {index + 1}</option>)}
           </select>
         ) : null}
-        <Button onClick={onAdd}>Agregar</Button>
+        <Button onClick={onAdd} disabled={disabled}>Agregar</Button>
         {onPick && suggestions.length > 0 ? (
           <div className="skill-suggestions">
             {suggestions.map((item) => (
