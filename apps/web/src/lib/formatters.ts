@@ -36,6 +36,18 @@ export function statusMeta(status: JobStatus) {
   return map[status];
 }
 
+// Ventana para considerar una vacante "nueva": solo cuenta como nueva si su estado
+// es "nueva" Y fue encontrada hace menos de 30 min. Las "nueva" más viejas quedan
+// en estado neutro (sin badge): ni "nueva" ni "vista" (ese es otro estado, manual).
+export const JOB_NEW_WINDOW_MIN = 30;
+
+export function isJobNew(job: Job): boolean {
+  if (job.status !== "nueva" || !job.detectedAt) return false;
+  const detected = new Date(job.detectedAt).getTime();
+  if (Number.isNaN(detected)) return false;
+  return Date.now() - detected < JOB_NEW_WINDOW_MIN * 60 * 1000;
+}
+
 export function syncStatusMeta(status: SyncRunStatus) {
   const map = {
     running: { label: "Ejecutando", color: "#4EA7F5", bg: "rgba(78,167,245,0.13)" },

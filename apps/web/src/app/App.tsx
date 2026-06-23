@@ -3,7 +3,7 @@ import { mockCredentials } from "../data/mockCredentials";
 import { mockJobs } from "../data/mockJobs";
 import { mockProfiles } from "../data/mockProfiles";
 import { apiClient, type UserSession, type AiProviderConfig, type AiAssignment } from "../lib/apiClient";
-import { initialsOf, buildSemanticAnalysis, displayJobScore } from "../lib/formatters";
+import { initialsOf, buildSemanticAnalysis, displayJobScore, isJobNew } from "../lib/formatters";
 import type { CredentialPayload, CredentialProvider, CredentialTestPayload } from "../types/credential";
 import type { AnalysisMode, DetailTab, Job, JobFilter, JobSort } from "../types/job";
 import type { Profile, ProfileDraft } from "../types/profile";
@@ -172,15 +172,16 @@ export function App() {
     setEvaluationByJob({});
   }, [user, activeProfileId]);
 
-  // Auto-reload del inbox: sin push en tiempo real, refrescamos las vacantes del
-  // perfil activo cada 5 minutos mientras el usuario está parado en la bandeja.
+  // Auto-reload: sin push en tiempo real, refrescamos las vacantes del perfil activo
+  // cada 5 minutos. Corre en cualquier vista para que los contadores del sidebar
+  // (nuevas) se actualicen solos aunque no estés parado en la bandeja.
   useEffect(() => {
-    if (!user || view !== "inbox") return;
+    if (!user) return;
     const id = window.setInterval(() => {
       apiClient.getJobs(activeProfileId).then(setJobs).catch(() => undefined);
     }, 5 * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [user, view, activeProfileId]);
+  }, [user, activeProfileId]);
 
   // El estado "ya analizada" (botones deshabilitados) solo se reinicia cuando el
   // usuario cambia la IA/modelo asignado a "Análisis CV vs vacante".
@@ -195,7 +196,7 @@ export function App() {
 
   const counts = useMemo(() => ({
     total: jobs.length,
-    nuevas: jobs.filter((job) => job.status === "nueva").length,
+    nuevas: jobs.filter((job) => isJobNew(job)).length,
     alto: jobs.filter((job) => displayJobScore(job, activeProfile) >= 85).length,
     aplicadas: jobs.filter((job) => job.status === "aplicada").length,
     descartadas: jobs.filter((job) => job.status === "descartada").length,
@@ -218,7 +219,7 @@ export function App() {
     if (query) {
       next = next.filter((job) => `${job.title} ${job.company} ${job.location} ${job.skills.join(" ")}`.toLowerCase().includes(query));
     }
-    if (filter === "nuevas") next = next.filter((job) => job.status === "nueva");
+    if (filter === "nuevas") next = next.filter((job) => isJobNew(job));
     if (filter === "alto") next = next.filter((job) => displayJobScore(job, activeProfile) >= 85);
     if (filter === "aplicadas") next = next.filter((job) => job.status === "aplicada");
     if (filter === "descartadas") next = next.filter((job) => job.status === "descartada");

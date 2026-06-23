@@ -2,7 +2,7 @@ import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Job } from "../../types/job";
 import type { Profile } from "../../types/profile";
-import { displayJobScore, scoreBand, scoreTypeLabel, statusMeta } from "../../lib/formatters";
+import { displayJobScore, isJobNew, scoreBand, scoreTypeLabel, statusMeta } from "../../lib/formatters";
 import { Badge } from "../ui/Badge";
 import { EmptyState } from "../ui/EmptyState";
 
@@ -54,6 +54,9 @@ export function JobList({ jobs, profile, selectedId, scrollRef, onSelect, onClea
           const displayScore = displayJobScore(job, profile);
           const band = scoreBand(displayScore);
           const status = statusMeta(job.status);
+          // "nueva" solo se muestra si fue encontrada hace <30 min; las viejas quedan
+          // neutras (sin badge), sin marcarlas como "vista".
+          const showStatusBadge = job.status !== "nueva" || isJobNew(job);
           const accent = job.status === "descartada" ? "#E5484D" : job.status === "aplicada" ? "#16A34A" : band.color;
           const statusClass =
             job.status === "descartada" ? "is-discarded" :
@@ -81,7 +84,7 @@ export function JobList({ jobs, profile, selectedId, scrollRef, onSelect, onClea
               <div className="job-main">
                 <div className="job-title-line">
                   <span className="job-title">{job.title}</span>
-                  <Badge color={status.color} background={status.bg}>{status.label}</Badge>
+                  {showStatusBadge ? <Badge color={status.color} background={status.bg}>{status.label}</Badge> : null}
                   {job.salary ? <span className="mono" style={{ flexShrink: 0, fontSize: 11, color: "var(--accent)" }}>{job.salary}</span> : null}
                 </div>
                 <div className="job-meta">{job.company} · {job.source} · {job.modality} · {job.location}</div>
