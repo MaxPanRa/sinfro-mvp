@@ -38,32 +38,36 @@ def job_location_allowed(location: str | None, profile) -> bool:
 
 
 def simple_match_score(title: str | None, skills: list[str] | None, modality: str | None, location: str | None, profile, description: str | None = None) -> int:
-    """Compatibilidad en dos tramos:
+    """Compatibilidad por tramos:
 
-    1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
-    2) Densidad de relevancia: +5 por palabra clave y +2 por skill del perfil que
+    1) Base estructural (máx 50): ubicación 25 + esquema 25.
+    2) +10 si el título coincide con el rol del perfil (>= mitad de las palabras del rol).
+    3) Densidad de relevancia: +5 por palabra clave y +2 por skill del perfil que
        aparezca en el texto de la vacante (título + descripción + skills). Clamp 0-99.
     """
-    role_terms = role_match_terms(profile)
-    if role_terms:
-        role_hay = _norm_text(f"{title or ''} {' '.join(skills or [])}")
-        matched_role = sum(1 for term in role_terms if term in role_hay)
-        role_component = round(matched_role / len(role_terms) * 20)
-    else:
-        role_component = 12
-
-    location_component = 15 if job_location_allowed(location, profile) else 8
+    # --- 1) Base estructural (máx 50): ubicación + esquema ---
+    location_component = 25 if job_location_allowed(location, profile) else 13
 
     profile_modality = (getattr(profile, "modality", "") or "").lower()
     if profile_modality and modality and modality.lower() in profile_modality:
-        modality_component = 15
+        modality_component = 25
     elif "remot" in f"{modality or ''} {location or ''}".lower():
-        modality_component = 13
+        modality_component = 21
     else:
-        modality_component = 8
+        modality_component = 13
 
-    base = role_component + location_component + modality_component
+    base = location_component + modality_component
 
+    # --- 2) Bonus de rol: el título refleja el rol objetivo (difícil) ---
+    role_terms = role_match_terms(profile)
+    role_bonus = 0
+    if role_terms:
+        title_norm = _norm_text(title)
+        matched_role = sum(1 for term in role_terms if term in title_norm)
+        if matched_role * 2 >= len(role_terms):
+            role_bonus = 10
+
+    # --- 3) Densidad de relevancia sobre el texto de la vacante ---
     text = _norm_text(f"{title or ''} {description or ''} {' '.join(skills or [])}")
     keyword_bonus = sum(
         5 for keyword in (getattr(profile, "keywords", None) or []) if (term := _norm_text(str(keyword))) and term in text
@@ -74,4 +78,4 @@ def simple_match_score(title: str | None, skills: list[str] | None, modality: st
         if (term := _norm_text(str(skill.get("name") if isinstance(skill, dict) else skill or ""))) and term in text
     )
 
-    return max(0, min(99, base + keyword_bonus + skill_bonus))
+    return max(0, min(99, base + role_bonus + keyword_bonus + skill_bonus))
