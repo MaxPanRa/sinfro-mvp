@@ -92,6 +92,8 @@ export function JobDetailPanel({ job, tab, analyzing, usesAi, analyzed, profile,
   const [discardOpen, setDiscardOpen] = useState(false);
   const [discardReasons, setDiscardReasons] = useState<Set<string>>(new Set());
   const [discardNotes, setDiscardNotes] = useState("");
+  // Modo pendiente de re-análisis (cuando ya estaba analizada y pedimos confirmación).
+  const [reanalyzeMode, setReanalyzeMode] = useState<AnalysisMode | null>(null);
 
   useEffect(() => {
     setTranslateOpen(false);
@@ -103,7 +105,16 @@ export function JobDetailPanel({ job, tab, analyzing, usesAi, analyzed, profile,
     setDiscardOpen(false);
     setDiscardReasons(new Set());
     setDiscardNotes("");
+    setReanalyzeMode(null);
   }, [job.id]);
+
+  // Lanza el análisis; si la vacante ya fue analizada en ese modo, pide confirmación
+  // primero (en vez de dejar el botón deshabilitado).
+  const requestAnalyze = (mode: AnalysisMode) => {
+    const alreadyDone = mode === "quick" ? analyzed === "quick" || analyzed === "deep" : mode === "deep" ? analyzed === "deep" : false;
+    if (alreadyDone) setReanalyzeMode(mode);
+    else onAnalyze(mode);
+  };
 
   const toggleDiscardReason = (reason: string) => {
     setDiscardReasons((current) => {
@@ -176,17 +187,17 @@ export function JobDetailPanel({ job, tab, analyzing, usesAi, analyzed, profile,
             {noDescription ? null : usesAi ? (
               <>
                 <Button
-                  disabled={analyzing || analyzed === "quick" || analyzed === "deep"}
-                  onClick={() => onAnalyze("quick")}
-                  title={analyzed ? "Ya analizada. Edita el perfil para volver a habilitar." : "Pase breve y económico con tu IA asignada."}
+                  disabled={analyzing}
+                  onClick={() => requestAnalyze("quick")}
+                  title="Pase breve y económico con tu IA asignada."
                   icon={analyzing ? <Loader2 size={15} style={{ animation: "spin 0.9s linear infinite" }} /> : <Sparkles size={15} />}
                 >
                   {analyzing ? "Analizando..." : "Análisis rápido"}
                 </Button>
                 <Button
-                  disabled={analyzing || analyzed === "deep"}
-                  onClick={() => onAnalyze("deep")}
-                  title={analyzed === "deep" ? "Ya analizada a profundidad. Edita el perfil para volver a habilitar." : "Análisis exhaustivo con tu IA asignada."}
+                  disabled={analyzing}
+                  onClick={() => requestAnalyze("deep")}
+                  title="Análisis exhaustivo con tu IA asignada."
                   icon={<Sparkles size={15} />}
                 >
                   Análisis profundo
@@ -249,6 +260,31 @@ export function JobDetailPanel({ job, tab, analyzing, usesAi, analyzed, profile,
               <div className="modal-footer">
                 <Button onClick={() => setDiscardOpen(false)}>Cancelar</Button>
                 <Button variant="danger" onClick={confirmDiscard} icon={<X size={14} />}>Descartar</Button>
+              </div>
+            </section>
+          </Modal>
+
+          <Modal open={reanalyzeMode !== null} onClose={() => setReanalyzeMode(null)}>
+            <section className="modal-panel" style={{ maxWidth: 440 }}>
+              <div className="modal-header">
+                <div>
+                  <div style={{ fontWeight: 700 }}>
+                    ¿Está seguro de que desea volver a analizar {reanalyzeMode === "deep" ? "profundamente" : "rápidamente"} esta vacante?
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                    Volverá a consumir tu IA asignada y reemplazará la evaluación actual.
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <Button onClick={() => setReanalyzeMode(null)}>Cancelar</Button>
+                <Button
+                  variant="primary"
+                  icon={<Sparkles size={14} />}
+                  onClick={() => { const mode = reanalyzeMode; setReanalyzeMode(null); if (mode) onAnalyze(mode); }}
+                >
+                  Sí, volver a analizar
+                </Button>
               </div>
             </section>
           </Modal>
