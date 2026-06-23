@@ -364,6 +364,11 @@ export const apiClient = {
     return request<SyncRun[]>("/sync/runs", undefined, []);
   },
 
+  async recalculateJobs(profileId?: number): Promise<{ recalculated: number; scanned: number }> {
+    const query = profileId ? `?profile_id=${profileId}` : "";
+    return request<{ recalculated: number; scanned: number }>(`/jobs/recalculate${query}`, { method: "POST" }, { recalculated: 0, scanned: 0 });
+  },
+
   async getSubscriptionPlans(): Promise<SubscriptionPlan[]> {
     return request<SubscriptionPlan[]>("/subscription/plans", undefined, mockPlans);
   },

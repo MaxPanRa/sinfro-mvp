@@ -69,6 +69,7 @@ export function App() {
   const [detailTab, setDetailTab] = useState<DetailTab>("analisis");
   const [analyzing, setAnalyzing] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [activeProfileId, setActiveProfileId] = useState(1);
   const [keywordsExpanded, setKeywordsExpanded] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -393,6 +394,26 @@ export function App() {
     window.setTimeout(poll, 2500);
   };
 
+  // Recalcula el % de las 100 vacantes más recientes del inbox del perfil activo,
+  // sin escanear ni consumir APIs. Refresca la bandeja al terminar.
+  const recalculateRecent = async () => {
+    if (recalculating || syncing) return;
+    if (!profiles.length) {
+      setView("perfiles");
+      return;
+    }
+    setRecalculating(true);
+    try {
+      await apiClient.recalculateJobs(activeProfileId);
+      const refreshed = await apiClient.getJobs(activeProfileId);
+      setJobs(refreshed);
+    } catch {
+      // Silencioso: si falla, el usuario puede reintentar.
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
   const openNewProfile = () => {
     setDraft({
       id: Date.now(),
@@ -583,6 +604,8 @@ export function App() {
       onToggleNav={() => setNavOpen((open) => !open)}
       onDensity={updateDensity}
       onRunSync={runSync}
+      recalculating={recalculating}
+      onRecalculate={recalculateRecent}
       onToggleThemeMenu={() => setThemeMenuOpen((open) => !open)}
       onCloseThemeMenu={() => setThemeMenuOpen(false)}
       onTheme={setTheme}

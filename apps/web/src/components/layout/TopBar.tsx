@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Menu, Palette, Zap } from "lucide-react";
+import { Menu, Palette, RefreshCcw, Zap } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ThemeMenu } from "./ThemeMenu";
 import { relativeTimeLabel } from "../../lib/formatters";
@@ -27,13 +27,15 @@ interface TopBarProps {
   onToggleNav: () => void;
   onDensity: (density: Density) => void;
   onRunSync: () => void;
+  recalculating: boolean;
+  onRecalculate: () => void;
   onToggleThemeMenu: () => void;
   onCloseThemeMenu: () => void;
   onTheme: (theme: ThemeId) => void;
   onAccent: (accent: AccentId) => void;
 }
 
-export function TopBar({ view, density, syncing, lastSync, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
+export function TopBar({ view, density, syncing, lastSync, theme, accent, navOpen, themeMenuOpen, onToggleNav, onDensity, onRunSync, recalculating, onRecalculate, onToggleThemeMenu, onCloseThemeMenu, onTheme, onAccent }: TopBarProps) {
   const themeMenuRef = useRef<HTMLDivElement>(null);
   // Re-render periódico para que la etiqueta "hace X min" no se quede congelada.
   const [, setTick] = useState(0);
@@ -77,6 +79,11 @@ export function TopBar({ view, density, syncing, lastSync, theme, accent, navOpe
         {themeMenuOpen ? <ThemeMenu theme={theme} accent={accent} density={density} onTheme={onTheme} onAccent={onAccent} onDensity={onDensity} /> : null}
       </div>
 
+      {view === "inbox" ? (
+        <Button onClick={onRecalculate} disabled={recalculating || syncing} title="Recalcula el % de las 100 vacantes más recientes (sin escanear ni gastar APIs)" icon={<RefreshCcw size={14} style={{ animation: recalculating ? "spin 0.9s linear infinite" : undefined }} />}>
+          <span className="scan-label">{recalculating ? "Recalculando..." : "Recalcular últimos 100"}</span>
+        </Button>
+      ) : null}
       <Button variant="primary" onClick={onRunSync} disabled={syncing} title={syncing ? "Escaneando... espera a que termine" : undefined} icon={<Zap size={14} style={{ animation: syncing ? "pulse 0.9s infinite" : undefined }} />}>
         <span className="scan-label">{syncing ? "Escaneando..." : "Escanear ahora"}</span>
       </Button>

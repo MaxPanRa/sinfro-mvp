@@ -20,6 +20,7 @@ from app.core import ai
 from app.core.ai import AIError, AI_PROVIDER_IDS, analyze_cv_with_ai, compare_job_with_ai, translate_job_description
 from app.core.config import settings
 from app.core.cv import analyze_cv_text, extract_cv_text
+from app.core.matching import simple_match_score
 from app.core.email import send_new_user_admin_email, send_plan_assigned_email, send_verification_email, smtp_configured
 from app.core.google import GMAIL_SEND_SCOPE, build_google_auth_url, exchange_code, get_google_userinfo
 from app.core.security import create_access_token, decrypt_bytes, decrypt_secret, encrypt_bytes, encrypt_secret, hash_password, hash_token, mask_secret, read_access_token, verify_password
@@ -1310,6 +1311,32 @@ def jobs(db: DbDep, user: Annotated[User, Depends(current_user)], profile_id: An
         select(JobPosting).where(JobPosting.user_id == user.id, JobPosting.profile_id == profile.id).order_by(JobPosting.score.desc())
     ).all()
     return [job_to_dict(row) for row in rows]
+
+
+@app.post("/jobs/recalculate")
+def recalculate_jobs(db: DbDep, user: Annotated[User, Depends(current_user)], profile_id: Annotated[int | None, Query()] = None) -> dict:
+    """Recalcula el % de compatibilidad de las 100 vacantes más recientes del inbox
+    del perfil activo. NO scrapea ni consume APIs: solo re-puntúa lo que el usuario ya
+    tiene, con el match simple (rol/ubicación/esquema). No toca vacantes evaluadas con
+    IA (no pisa esas evaluaciones)."""
+    profile = resolve_profile(db, user, profile_id)
+    if not profile:
+        raise HTTPException(status_code=400, detail="Crea un perfil antes de recalcular")
+    rows = db.scalars(
+        select(JobPosting)
+        .where(JobPosting.user_id == user.id, JobPosting.profile_id == profile.id)
+        .order_by(JobPosting.detected_at.desc())
+        .limit(100)
+    ).all()
+    recalculated = 0
+    for row in rows:
+        if (row.score_type or "").lower() == "ia":
+            continue  # respetamos las evaluaciones con IA
+        row.score = simple_match_score(row.title, row.skills, row.modality, row.location, profile)
+        row.score_type = "semantica"
+        recalculated += 1
+    db.commit()
+    return {"recalculated": recalculated, "scanned": len(rows)}
 
 
 @app.get("/jobs/{job_id}")

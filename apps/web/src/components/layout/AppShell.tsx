@@ -31,6 +31,8 @@ interface AppShellProps {
   onToggleNav: () => void;
   onDensity: (density: Density) => void;
   onRunSync: () => void;
+  recalculating: boolean;
+  onRecalculate: () => void;
   onToggleThemeMenu: () => void;
   onCloseThemeMenu: () => void;
   onTheme: (theme: ThemeId) => void;
@@ -73,6 +75,8 @@ export function AppShell(props: AppShellProps) {
           onToggleNav={props.onToggleNav}
           onDensity={props.onDensity}
           onRunSync={props.onRunSync}
+          recalculating={props.recalculating}
+          onRecalculate={props.onRecalculate}
           onToggleThemeMenu={props.onToggleThemeMenu}
           onCloseThemeMenu={props.onCloseThemeMenu}
           onTheme={props.onTheme}
