@@ -77,7 +77,7 @@ function roleMatchTerms(profile: Profile): string[] {
 
 // Match en dos tramos (espejo de simple_match_score del worker/API):
 //  1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
-//  2) Densidad de relevancia: +3% por palabra clave y +1% por skill del perfil que
+//  2) Densidad de relevancia: +5% por palabra clave y +2% por skill del perfil que
 //     aparezca en el texto de la vacante (título + descripción + skills). Clamp 0-99.
 export function buildSemanticAnalysis(job: Job, profile: Profile) {
   // --- 1) Base estructural (máx 50) ---
@@ -104,8 +104,8 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
   const text = normSkill(`${job.title || ""} ${job.description || ""} ${(job.skills || []).join(" ")}`);
   const matchedKeywords = (profile.keywords || []).filter((k) => { const t = normSkill(k); return !!t && text.includes(t); });
   const matchedSkills = (profile.skills || []).map((s) => s.name).filter((s) => { const t = normSkill(s); return !!t && text.includes(t); });
-  const keywordBonus = matchedKeywords.length * 3;
-  const skillBonus = matchedSkills.length;
+  const keywordBonus = matchedKeywords.length * 5;
+  const skillBonus = matchedSkills.length * 2;
 
   const score = Math.min(99, base + keywordBonus + skillBonus);
 

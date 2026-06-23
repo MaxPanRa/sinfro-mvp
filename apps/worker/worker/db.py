@@ -444,8 +444,8 @@ def simple_match_score(
     """Compatibilidad en dos tramos, simple y rápido:
 
     1) Base estructural (máx 50): rol/puesto 20 + ubicación 15 + esquema 15.
-    2) Densidad de relevancia (sube por encima de la base): +3 por cada palabra
-       clave del perfil y +1 por cada skill que aparezca en el texto de la vacante
+    2) Densidad de relevancia (sube por encima de la base): +5 por cada palabra
+       clave del perfil y +2 por cada skill que aparezca en el texto de la vacante
        (título + descripción + skills). Clamp final 0-99.
     """
     # --- 1) Base estructural (máx 50) ---
@@ -472,10 +472,10 @@ def simple_match_score(
     # --- 2) Densidad de relevancia sobre el texto de la vacante ---
     text = _norm_text(f"{title or ''} {description or ''} {' '.join(skills or [])}")
     keyword_bonus = sum(
-        3 for keyword in (profile.keywords or []) if (term := _norm_text(str(keyword))) and term in text
+        5 for keyword in (profile.keywords or []) if (term := _norm_text(str(keyword))) and term in text
     )
     skill_bonus = sum(
-        1
+        2
         for skill in (profile.skills or [])
         if (term := _norm_text(str(skill.get("name") if isinstance(skill, dict) else skill or ""))) and term in text
     )
