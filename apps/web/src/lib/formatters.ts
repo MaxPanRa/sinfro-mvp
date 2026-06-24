@@ -87,6 +87,43 @@ function roleMatchTerms(profile: Profile): string[] {
   return out.slice(0, 8);
 }
 
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+function tokenSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const longest = Math.max(a.length, b.length);
+  if ((longest - Math.min(a.length, b.length)) / longest > 0.6) return 0;
+  return 1 - levenshtein(a, b) / longest;
+}
+
+// Similitud rol vs título (espejo de role_title_similarity del backend). Atajo exacto
+// (sin Levenshtein) cuando la palabra del rol está tal cual en el título.
+function roleTitleSimilarity(profile: Profile, title: string): number {
+  const roleTokens = roleMatchTerms(profile);
+  const titleTokens = (normSkill(title).match(/[a-z0-9.+#]+/g) || []).filter((t) => t.length >= 3);
+  if (!roleTokens.length || !titleTokens.length) return 0;
+  const titleSet = new Set(titleTokens);
+  let total = 0;
+  for (const rt of roleTokens) {
+    total += titleSet.has(rt) ? 1 : Math.max(...titleTokens.map((tt) => tokenSimilarity(rt, tt)));
+  }
+  return total / roleTokens.length;
+}
+
 // Match por tramos (espejo de simple_match_score del worker/API):
 //  1) Base estructural (máx 50): ubicación 25 + esquema 25.
 //  2) +10% si el título coincide con tu rol (>= mitad de las palabras del rol).
@@ -107,13 +144,10 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
 
   const base = locationComponent + modalityComponent;
 
-  // --- 2) Bonus de rol: el título refleja tu rol objetivo (exigente: +10) ---
-  const roleTerms = roleMatchTerms(profile);
-  const titleNorm = normSkill(job.title || "");
-  const matchedRole = roleTerms.filter((term) => titleNorm.includes(term));
-  const roleMatches = roleTerms.length > 0 && matchedRole.length * 2 >= roleTerms.length;
-  const roleBonus = roleMatches ? 10 : 0;
-  const roleScore = roleTerms.length ? Math.round((matchedRole.length / roleTerms.length) * 100) : 0;
+  // --- 2) Bonus de rol: similitud Levenshtein rol vs título (>70% perfecto +10, >40% aprox +5) ---
+  const roleSim = roleTitleSimilarity(profile, job.title || "");
+  const roleBonus = roleSim > 0.70 ? 10 : roleSim > 0.40 ? 5 : 0;
+  const roleScore = Math.round(roleSim * 100);
 
   // --- 3) Densidad de relevancia sobre el texto de la vacante ---
   const text = normSkill(`${job.title || ""} ${job.description || ""} ${(job.skills || []).join(" ")}`);
@@ -126,14 +160,15 @@ export function buildSemanticAnalysis(job: Job, profile: Profile) {
 
   const matched = [...matchedKeywords, ...matchedSkills];
   const reasons: string[] = [];
-  if (roleMatches) reasons.push(`El título coincide con tu rol (+10%): ${matchedRole.slice(0, 6).join(", ")}.`);
+  if (roleBonus === 10) reasons.push(`El título coincide con tu rol (${roleScore}%, +10%).`);
+  else if (roleBonus === 5) reasons.push(`El título coincide aprox. con tu rol (${roleScore}%, +5%).`);
   if (matchedKeywords.length || matchedSkills.length) reasons.push(`Menciona ${matchedKeywords.length} de tus palabras clave (+${keywordBonus}%) y ${matchedSkills.length} skills (+${skillBonus}%).`);
   if (modalityScore >= 85) reasons.push(`Esquema ${job.modality.toLowerCase()} compatible con tu preferencia.`);
   if (locationAllowed) reasons.push("Ubicación compatible con tu perfil.");
   if (!reasons.length) reasons.push("Coincidencia baja: el texto de la vacante no menciona tu rol, palabras clave ni skills.");
 
   const gaps = [
-    roleMatches ? "El título refleja tu rol objetivo." : "El título no coincide con tu rol objetivo (no suma el +10%).",
+    roleBonus > 0 ? "El título refleja tu rol objetivo." : "El título no coincide con tu rol objetivo (no suma bonus de rol).",
     "El match es aproximado (ubicación, esquema, rol y densidad de tus términos). Usa el análisis con IA para una evaluación precisa.",
   ];
 

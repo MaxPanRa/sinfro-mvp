@@ -26,6 +26,49 @@ def role_match_terms(profile) -> list[str]:
     return [w for w in words if not (w in seen or seen.add(w))][:8]
 
 
+def _levenshtein(a: str, b: str) -> int:
+    """Distancia de edición (DP con una sola fila; rápido para palabras cortas)."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _token_similarity(a: str, b: str) -> float:
+    if a == b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    longest = max(len(a), len(b))
+    if (longest - min(len(a), len(b))) / longest > 0.6:
+        return 0.0
+    return 1 - _levenshtein(a, b) / longest
+
+
+def role_title_similarity(profile, title: str | None) -> float:
+    """Similitud rol vs título: por cada palabra del rol, mejor coincidencia entre las
+    del título (1.0 exacta —sin Levenshtein—; si no, Levenshtein normalizado), promediada.
+    El atajo exacto hace que el DP casi nunca corra."""
+    role_tokens = role_match_terms(profile)
+    title_tokens = [t for t in re.findall(r"[a-z0-9.+#]+", _norm_text(title)) if len(t) >= 3]
+    if not role_tokens or not title_tokens:
+        return 0.0
+    title_set = set(title_tokens)
+    total = 0.0
+    for rt in role_tokens:
+        total += 1.0 if rt in title_set else max(_token_similarity(rt, tt) for tt in title_tokens)
+    return total / len(role_tokens)
+
+
 def job_location_allowed(location: str | None, profile) -> bool:
     loc = _strip_accents((location or "").strip().lower())
     if not loc or "remot" in loc or "latam" in loc:
@@ -41,7 +84,7 @@ def simple_match_score(title: str | None, skills: list[str] | None, modality: st
     """Compatibilidad por tramos:
 
     1) Base estructural (máx 50): ubicación 25 + esquema 25.
-    2) +10 si el título coincide con el rol del perfil (>= mitad de las palabras del rol).
+    2) Bonus de rol por similitud Levenshtein rol vs título: +10 si >70%, +5 si >40%, 0 si menos.
     3) Densidad de relevancia: +5 por palabra clave y +2 por skill del perfil que
        aparezca en el texto de la vacante (título + descripción + skills). Clamp 0-99.
     """
@@ -58,14 +101,9 @@ def simple_match_score(title: str | None, skills: list[str] | None, modality: st
 
     base = location_component + modality_component
 
-    # --- 2) Bonus de rol: el título refleja el rol objetivo (difícil) ---
-    role_terms = role_match_terms(profile)
-    role_bonus = 0
-    if role_terms:
-        title_norm = _norm_text(title)
-        matched_role = sum(1 for term in role_terms if term in title_norm)
-        if matched_role * 2 >= len(role_terms):
-            role_bonus = 10
+    # --- 2) Bonus de rol: similitud Levenshtein rol vs título (>70% perfecto, >40% aprox) ---
+    role_sim = role_title_similarity(profile, title)
+    role_bonus = 10 if role_sim > 0.70 else 5 if role_sim > 0.40 else 0
 
     # --- 3) Densidad de relevancia sobre el texto de la vacante ---
     text = _norm_text(f"{title or ''} {description or ''} {' '.join(skills or [])}")
